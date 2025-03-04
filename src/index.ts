@@ -21,13 +21,21 @@ declare module 'koishi' {
   }
 }
 
+/** 统计记录接口 */
 interface StatRecord {
+  /** 记录类型：命令或消息 */
   type: 'command' | 'message'
+  /** 平台标识 */
   platform: string
+  /** 频道ID */
   channelId: string
+  /** 用户ID */
   userId: string
+  /** 命令名称（仅命令类型有效） */
   command?: string
+  /** 记录次数 */
   count: number
+  /** 最后一次记录时间 */
   lastTime: Date
 }
 
@@ -50,6 +58,13 @@ interface BindingRecord {
 
 // 工具函数
 const utils = {
+  /**
+   * 获取用户或群组名称
+   * @param session 会话对象
+   * @param id 目标ID
+   * @param type 目标类型：'user' 用户 或 'guild' 群组
+   * @returns 名称，获取失败则返回原ID
+   */
   async getName(session: any, id: string, type: 'user' | 'guild'): Promise<string> {
     try {
       if (type === 'user') {
@@ -66,14 +81,11 @@ const utils = {
     }
   },
 
-  formatCount(count: number): string {
-    return count.toString().padStart(6, ' ')
-  },
-
-  formatCommand(command: string): string {
-    return command.padEnd(15, ' ')
-  },
-
+  /**
+   * 将时间转换为"多久之前"的格式
+   * @param date 目标时间
+   * @returns 格式化后的字符串
+   */
   formatTimeAgo(date: Date): string {
     if (isNaN(date.getTime())) {
       return '未知时间'
@@ -108,11 +120,88 @@ const utils = {
     }
 
     return parts.length ? parts.join(' ') + '前' : '一会前'
+  },
+
+  /**
+   * 将查询选项转换为条件文本数组
+   * @param options 查询选项
+   * @returns 条件文本数组
+   */
+  formatConditions(options: {
+    type?: string
+    user?: string
+    group?: string
+    platform?: string
+    command?: string
+  }): string[] {
+    const conditions = []
+    if (options.type) conditions.push(options.type === 'command' ? '命令' : '消息')
+    if (options.user) conditions.push(`用户 ${options.user}`)
+    if (options.group) conditions.push(`群组 ${options.group}`)
+    if (options.platform) conditions.push(`平台 ${options.platform}`)
+    if (options.command) conditions.push(`命令 ${options.command}`)
+    return conditions
+  },
+
+  /**
+   * 将查询选项转换为数据库查询条件
+   * @param options 查询选项
+   * @returns 数据库查询对象
+   */
+  buildQueryFromOptions(options: {
+    type?: 'command' | 'message'
+    user?: string
+    group?: string
+    platform?: string
+    command?: string
+  }) {
+    const query: any = { type: options.type || 'command' }
+    if (options.user) query.userId = options.user
+    if (options.group) query.channelId = options.group
+    if (options.platform) query.platform = options.platform
+    if (options.command) query.command = options.command
+    return query
+  },
+
+  /**
+   * 处理统计记录，聚合并格式化结果
+   * @param records 统计记录数组
+   * @param aggregateKey 聚合键名
+   * @param formatFn 可选的格式化函数
+   * @returns 格式化后的结果数组
+   */
+  async processStatRecords(
+    records: StatRecord[],
+    aggregateKey: string,
+    formatFn?: (key: string, data: { count: number, lastTime: Date }) => Promise<string>
+  ) {
+    const stats = records.reduce((map, record) => {
+      const key = aggregateKey === 'command' ? record.command?.split('.')[0] || '' : record[aggregateKey]
+      const curr = map.get(key) || { count: 0, lastTime: record.lastTime }
+      curr.count += record.count
+      if (record.lastTime > curr.lastTime) curr.lastTime = record.lastTime
+      map.set(key, curr)
+      return map
+    }, new Map())
+
+    const sortedEntries = Array.from(stats.entries())
+      .sort((a, b) => b[1].count - a[1].count)
+
+    if (formatFn) {
+      return Promise.all(sortedEntries.map(([key, data]) => formatFn(key, data)))
+    }
+
+    return sortedEntries.map(([key, {count, lastTime}]) =>
+      `${key.padEnd(12, ' ')}${count.toString().padStart(6, ' ')} 次  ${utils.formatTimeAgo(lastTime).padEnd(20, ' ')}`)
   }
 }
 
 // 数据库操作
 const database = {
+  /**
+   * 初始化数据库模型
+   * @param ctx Koishi上下文
+   */
   initialize(ctx: Context) {
     ctx.model.extend('analytics.stat', {
       type: 'string',
@@ -127,6 +216,11 @@ const database = {
     })
   },
 
+  /**
+   * 保存统计记录
+   * @param ctx Koishi上下文
+   * @param data 记录数据
+   */
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
     if (!data.type || !data.platform || !data.channelId || !data.userId) {
       ctx.logger.warn('saveRecord: missing required fields', data)
@@ -160,6 +254,12 @@ const database = {
     }
   },
 
+  /**
+   * 导入历史数据
+   * @param ctx Koishi上下文
+   * @param session 会话对象
+   * @param overwrite 是否覆盖现有数据
+   */
   async importLegacyData(ctx: Context, session?: any, overwrite = false) {
     const hasLegacyTable = Object.keys(ctx.database.tables).includes('analytics.command')
     if (!hasLegacyTable) {
@@ -239,6 +339,12 @@ const database = {
     }
   },
 
+  /**
+   * 清除统计数据
+   * @param ctx Koishi上下文
+   * @param options 清除选项
+   * @returns 清除的记录数量
+   */
   async clearStats(ctx: Context, options: {
     type?: 'command' | 'message'
     userId?: string
@@ -255,6 +361,11 @@ const database = {
   }
 }
 
+/**
+ * 插件入口函数
+ * @param ctx Koishi上下文
+ * @param config 插件配置
+ */
 export async function apply(ctx: Context, config: Config) {
   database.initialize(ctx)
 
@@ -281,40 +392,16 @@ export async function apply(ctx: Context, config: Config) {
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .action(async ({options}) => {
-      const query: any = { type: 'command' }
-      if (options.user) query.userId = options.user
-      if (options.group) query.channelId = options.group
-      if (options.platform) query.platform = options.platform
-      if (options.command) query.command = options.command
-
+      const query = utils.buildQueryFromOptions({ ...options, type: 'command' })
       const records = await ctx.database.get('analytics.stat', query)
       if (!records.length) return '未找到相关记录'
 
-      const conditions = []
-      if (options.user) conditions.push(`用户 ${options.user}`)
-      if (options.group) conditions.push(`群组 ${options.group}`)
-      if (options.platform) conditions.push(`平台 ${options.platform}`)
-      if (options.command) conditions.push(`命令 ${options.command}`)
+      const conditions = utils.formatConditions(options)
       const title = conditions.length
         ? `${conditions.join(' ')} 命令统计 ——`
         : '全局命令统计 ——'
 
-      // 修改统计逻辑，将子命令合并到主命令
-      const stats = records.reduce((map, record) => {
-        // 提取主命令名称（去掉子命令部分）
-        const mainCommand = record.command.split('.')[0]
-        const curr = map.get(mainCommand) || { count: 0, lastTime: record.lastTime }
-        curr.count += record.count
-        if (record.lastTime > curr.lastTime) curr.lastTime = record.lastTime
-        map.set(mainCommand, curr)
-        return map
-      }, new Map())
-
-      const lines = Array.from(stats.entries())
-        .sort((a, b) => b[1].count - a[1].count)
-        .map(([key, {count, lastTime}]) =>
-          `${utils.formatCommand(key)}${utils.formatCount(count)} 次  ${utils.formatTimeAgo(lastTime).padEnd(20, ' ')}`)
-
+      const lines = await utils.processStatRecords(records, 'command')
       return title + '\n\n' + lines.join('\n')
     })
 
@@ -338,13 +425,7 @@ export async function apply(ctx: Context, config: Config) {
         command: options.command
       })
 
-      const conditions = []
-      if (type) conditions.push(type === 'command' ? '命令' : '消息')
-      if (options.user) conditions.push(`用户 ${options.user}`)
-      if (options.platform) conditions.push(`平台 ${options.platform}`)
-      if (options.group) conditions.push(`群组 ${options.group}`)
-      if (options.command) conditions.push(`命令 ${options.command}`)
-
+      const conditions = utils.formatConditions(options)
       return conditions.length
         ? `已删除${conditions.join('、')}的统计记录`
         : '已删除所有统计记录'
@@ -368,36 +449,21 @@ export async function apply(ctx: Context, config: Config) {
     .option('group', '-g [group:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .action(async ({session, options}) => {
-      const query: any = { type: 'message' }
-      if (options.user) query.userId = options.user
-      if (options.group) query.channelId = options.group
-      if (options.platform) query.platform = options.platform
-
+      const query = utils.buildQueryFromOptions({ ...options, type: 'message' })
       const records = await ctx.database.get('analytics.stat', query)
       if (!records.length) return '未找到相关记录'
 
-      const conditions = []
-      if (options.user) conditions.push(`用户 ${options.user}`)
-      if (options.group) conditions.push(`群组 ${options.group}`)
-      if (options.platform) conditions.push(`平台 ${options.platform}`)
+      const conditions = utils.formatConditions(options)
       const title = conditions.length
         ? `${conditions.join(' ')} 发言统计 ——`
         : '全局发言统计 ——'
 
-      const stats = records.reduce((map, record) => {
-        const key = record.userId
-        const curr = map.get(key) || { count: 0, lastTime: record.lastTime }
-        curr.count += record.count
-        if (record.lastTime > curr.lastTime) curr.lastTime = record.lastTime
-        map.set(key, curr)
-        return map
-      }, new Map())
+      const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
+        const name = await utils.getName(session, userId, 'user')
+        return `${name}: ${data.count}条（${utils.formatTimeAgo(data.lastTime)}）`
+      }
 
-      const lines = await Promise.all(Array.from(stats.entries())
-        .sort((a, b) => b[1].count - a[1].count)
-        .map(async ([key, {count, lastTime}]) =>
-          `${await utils.getName(session, key, 'user')}: ${count}条（${utils.formatTimeAgo(lastTime)}）`))
-
+      const lines = await utils.processStatRecords(records, 'userId', formatUserStat)
       return title + '\n' + lines.join('\n')
     })
 }
