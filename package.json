@@ -2,13 +2,21 @@
   "name": "koishi-plugin-statistical-ranking",
   "description": "统计成员发言和命令使用并可排行展示",
   "version": "0.0.1",
+  "contributors": [
+    "Yis_Rime <yis_rime@outlook.com>"
+  ],
+  "homepage": "https://github.com/YisRime/koishi-plugin-statistical-ranking",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YisRime/koishi-plugin-statistical-ranking.git"
+  },
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
     "lib",
     "dist"
   ],
-  "license": "MIT",
+  "license": "GPL-3.0",
   "scripts": {},
   "keywords": [
     "chatbot",
