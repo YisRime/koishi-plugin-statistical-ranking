@@ -418,6 +418,26 @@ const utils = {
   getGuildId(session: any): string {
     return session.guildId || session.groupId || session.channelId || 'private'
   },
+
+  /**
+   * 获取用户的平台ID
+   * @param session 会话对象
+   * @returns Promise<string> 平台ID
+   */
+  async getPlatformId(session: any): Promise<string> {
+    if (!session?.userId) return ''
+
+    const [binding] = await session.ctx.database.get('binding', {
+      aid: session.userId,
+      platform: session.platform
+    })
+
+    if (binding?.pid) {
+      return binding.pid
+    }
+
+    return session.userId
+  },
 }
 
 /**
@@ -508,14 +528,18 @@ const database = {
       const bot = ctx.bots.find(bot => bot.platform === data.platform)
 
       const [userInfo, guildInfo] = await Promise.all([
-        bot?.getGuildMember?.(data.guildId, data.userId).catch(() => null),
-        bot?.getGuild?.(data.guildId).catch(() => null)
+        data.guildId === 'private'
+          ? bot?.getUser?.(data.userId).catch(() => null)
+          : bot?.getGuildMember?.(data.guildId, data.userId).catch(() => null),
+        data.guildId === 'private'
+          ? null
+          : bot?.getGuild?.(data.guildId).catch(() => null)
       ])
 
       const updateData = {
         count: (existing?.count || 0) + 1,
         lastTime: new Date(),
-        userNickname: userInfo?.nickname || userInfo?.name || existing?.userNickname || '',
+        userNickname: userInfo?.nickname || userInfo?.name || userInfo?.username || existing?.userNickname || '',
         guildName: guildInfo?.name || existing?.guildName || '',
       }
 
@@ -560,12 +584,12 @@ const database = {
     const bindings = await ctx.database.get('binding', {})
     const userIdMap = new Map<string, { pid: string; platform: string }>()
     for (const binding of bindings) {
-      if (!binding.pid) continue
-      const key = `${binding.aid}`
-      userIdMap.set(key, {
-        pid: binding.pid,
-        platform: binding.platform
-      })
+      if (binding.pid && binding.aid) {
+        userIdMap.set(`${binding.aid}`, {
+          pid: binding.pid,
+          platform: binding.platform
+        })
+      }
     }
 
     const batchSize = 100
@@ -583,9 +607,9 @@ const database = {
 
     for (const cmd of legacyCommands) {
       try {
-        const binding = userIdMap.get(cmd.userId)
+        const binding = userIdMap.get(`${cmd.userId}`)
         const platform = binding?.platform || cmd.platform || 'unknown'
-        const userId = binding?.pid || cmd.userId
+        const userId = binding?.pid || `${cmd.userId}`
         const command = cmd.name || ''
         const guildId = cmd.channelId || 'private'
 
@@ -704,19 +728,19 @@ const database = {
 export async function apply(ctx: Context, config: Config) {
   database.initialize(ctx)
 
-  ctx.on('command/before-execute', ({session, command}) =>
+  ctx.on('command/before-execute', async ({session, command}) =>
     database.saveRecord(ctx, {
       platform: session.platform,
       guildId: utils.getGuildId(session),
-      userId: session.userId,
+      userId: await utils.getPlatformId(session),
       command: command.name
     }))
 
-  ctx.on('message', (session) =>
+  ctx.on('message', async (session) =>
     database.saveRecord(ctx, {
       platform: session.platform,
       guildId: utils.getGuildId(session),
-      userId: session.userId,
+      userId: await utils.getPlatformId(session),
       command: null
     }))
 
@@ -887,9 +911,8 @@ export async function apply(ctx: Context, config: Config) {
           command: options.command
         })
 
-        // 如果返回-1表示删除了整个表
         if (result === -1) {
-          return '已删除所有统计记录并重置统计表'
+          return '已删除所有统计记录'
         }
 
         const conditions = utils.formatConditions(options)
