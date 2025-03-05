@@ -10,23 +10,21 @@ interface QueryOptions {
 }
 
 /**
- * @internal
  * 统计数据聚合管理器
- * 用于处理和聚合统计数据，支持自定义键格式化
+ * @class StatMap
+ * @description 用于处理和聚合统计数据，支持自定义键格式化和排序
+ * @internal
  */
-export class StatMap {
+class StatMap {
   private data = new Map<string, { count: number, lastTime: Date }>()
-  private keyFormat: (key: string) => string
 
-  constructor(keyFormat?: (key: string) => string) {
-    this.keyFormat = keyFormat || ((k) => k)
-  }
+  constructor(private keyFormat: (key: string) => string = (k) => k) {}
 
   add(key: string, count: number, time: Date) {
     const formattedKey = this.keyFormat(key)
-    const curr = this.data.get(formattedKey) || { count: 0, lastTime: time }
+    const curr = this.data.get(formattedKey) ?? { count: 0, lastTime: time }
     curr.count += count
-    if (time > curr.lastTime) curr.lastTime = time
+    curr.lastTime = time > curr.lastTime ? time : curr.lastTime
     this.data.set(formattedKey, curr)
   }
 
@@ -49,46 +47,32 @@ export class StatMap {
 
 /**
  * @internal
- * 工具函数集合对象
+ * 工具函数集合
+ * @description 提供各种辅助功能，如时间格式化、名称获取、数据处理等
  */
 export const utils = {
   /**
-   * 批量获取用户或群组名称
+   * 获取用户或群组名称
+   * @param session - 会话对象
+   * @param id - 目标 ID
+   * @param type - 类型(user/guild)
+   * @returns Promise<string> 返回名称，获取失败则返回原始 ID
    */
   async getName(session: any, id: string, type: NameType): Promise<string> {
-    const cacheKey = `${type}:${id}`
+    if (!session?.bot) return id
 
-    if (utils._nameQueue.has(cacheKey)) {
-      return utils._nameQueue.get(cacheKey)
-    }
-
-    const namePromise = (async () => {
-      try {
-        if (type === 'user') {
-          if (session.userId === id) {
-            return session.username || session.nickname || id
-          }
-          const result = await session.bot.getGuildMember?.(session.guildId, id)
-          return result?.nickname || result?.username || id
-        } else {
-          const result = await session.bot.getGuild?.(id)
-          return result?.name || id
-        }
-      } catch {
-        return id
+    try {
+      if (type === 'user') {
+        if (session.userId === id) return session.username ?? id
+        const member = await session.bot.getGuildMember?.(session.guildId, id)
+        return member?.username ?? id
       }
-    })()
 
-    utils._nameQueue.set(cacheKey, namePromise)
-    utils._queueCount++
-
-    if (utils._queueCount >= utils._batchSize) {
-      await new Promise(resolve => setTimeout(resolve, utils._batchDelay))
-      utils._nameQueue.clear()
-      utils._queueCount = 0
+      const guild = await session.bot.getGuild?.(id)
+      return guild?.name ?? id
+    } catch {
+      return id
     }
-
-    return namePromise
   },
 
   _nameQueue: new Map<string, Promise<string>>(),
@@ -96,41 +80,39 @@ export const utils = {
   _batchSize: 10,
   _batchDelay: 100,
 
+  /**
+   * 格式化时间差
+   * @param date - 目标时间
+   * @returns string 格式化后的时间差字符串
+   * @description 将时间转换为"X年X月前"等易读格式
+   */
   formatTimeAgo(date: Date): string {
-    if (isNaN(date.getTime())) {
-      return '未知时间'.padStart(9)
-    }
+    if (!date?.getTime() || isNaN(date.getTime())) return '未知时间'.padStart(9)
 
-    const now = Date.now()
-    if (date.getTime() > now) {
-      date = new Date()
-    }
-
-    const diff = Math.max(0, now - date.getTime())
+    const diff = Math.max(0, Date.now() - date.getTime())
     if (diff < 60000) return '一会前'.padStart(9)
 
     const units = [
-      { div: 31536000000, unit: '年' },
-      { div: 2592000000, unit: '月' },
-      { div: 86400000, unit: '天' },
-      { div: 3600000, unit: '小时' },
-      { div: 60000, unit: '分钟' }
+      [31536000000, '年'],
+      [2592000000, '月'],
+      [86400000, '天'],
+      [3600000, '小时'],
+      [60000, '分钟']
     ]
 
     const parts = []
     let remaining = diff
 
-    for (const { div, unit } of units) {
-      const val = Math.floor(remaining / div)
+    for (const [div, unit] of units) {
+      const val = Math.floor(remaining / Number(div))
       if (val > 0) {
         parts.push(`${val}${unit}`)
-        remaining %= div
         if (parts.length === 2) break
+        remaining %= Number(div)
       }
     }
 
-    const timeText = parts.length ? parts.join('') + '前' : '一会前'
-    return timeText.padStart(9)
+    return (parts.length ? parts.join('') + '前' : '一会前').padStart(9)
   },
 
   /**
@@ -138,10 +120,10 @@ export const utils = {
    */
   buildQueryFromOptions(options: QueryOptions) {
     const query: Record<string, any> = {}
-    if (options.user) query.userId = options.user
-    if (options.guild) query.guildId = options.guild
-    if (options.platform) query.platform = options.platform
-    if (options.command) query.command = options.command
+    options.user && (query.userId = options.user)
+    options.guild && (query.guildId = options.guild)
+    options.platform && (query.platform = options.platform)
+    options.command && (query.command = options.command)
     return query
   },
 
@@ -175,8 +157,16 @@ export const utils = {
       : undefined
 
     const stats = new StatMap(keyFormat)
+    const nameMap = new Map<string, string>()
+
     for (const record of records) {
       stats.addRecord(record, aggregateKey)
+
+      if (aggregateKey === 'userId' && record.userName) {
+        nameMap.set(record.userId, record.userName)
+      } else if (aggregateKey === 'guildId' && record.guildName) {
+        nameMap.set(record.guildId, record.guildName)
+      }
     }
 
     const entries = stats.sortedEntries(sortBy)
@@ -186,8 +176,8 @@ export const utils = {
     }
 
     return entries.map(([key, {count, lastTime}]) => {
-      const displayKey = truncateId ? key.slice(0, 10) : key
-      return `${displayKey.padEnd(10, ' ')}${count.toString().padStart(5)}次 ${utils.formatTimeAgo(lastTime)}`
+      const displayName = nameMap.get(key) || (truncateId ? key.slice(0, 10) : key)
+      return `${displayName.padEnd(10, ' ')}${count.toString().padStart(5)}次 ${utils.formatTimeAgo(lastTime)}`
     })
   },
 
@@ -230,20 +220,20 @@ export const utils = {
    * 获取会话完整信息
    */
   async getSessionInfo(session: any) {
+    if (!session) return null
+
     const platform = session.platform
     const guildId = utils.getGuildId(session)
     const userId = await utils.getPlatformId(session)
     const bot = session.bot
 
-    let userName = session.username || ''
-    if (!userName && bot?.getGuildMember) {
-      const userInfo = await bot.getGuildMember(guildId, userId).catch(() => null)
-      userName = userInfo?.nickname || userInfo?.username || ''
-    }
+    const userName = session.username ?? (bot?.getGuildMember
+      ? (await bot.getGuildMember(guildId, userId).catch(() => null))?.username
+      : '') ?? ''
 
     const guildName = guildId === 'private'
       ? ''
-      : (await bot?.getGuild?.(guildId).catch(() => null))?.name || ''
+      : (await bot?.getGuild?.(guildId).catch(() => null))?.name ?? ''
 
     return {
       platform,

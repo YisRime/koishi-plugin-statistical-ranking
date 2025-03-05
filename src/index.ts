@@ -1,6 +1,6 @@
 import { Context, Schema } from 'koishi'
 import { database } from './database'
-import { utils, StatMap } from './utils'
+import { utils } from './utils'
 
 /**
  * @packageDocumentation
@@ -88,14 +88,15 @@ declare module 'koishi' {
 /**
  * 统计记录数据结构
  * @interface StatRecord
- * @property {string} platform - 平台标识
- * @property {string} guildId - 群组ID
- * @property {string} userId - 用户ID
- * @property {string} [userName] - 用户昵称
- * @property {string} [command] - 命令名称
- * @property {number} count - 记录次数
- * @property {Date} lastTime - 最后记录时间
- * @property {string} [guildName] - 群组名称
+ * @description 记录用户在不同平台、群组中的命令使用和消息发送情况
+ * @property {string} platform - 平台标识(如 onebot、telegram 等)
+ * @property {string} guildId - 群组/频道 ID，私聊时为 'private'
+ * @property {string} userId - 用户在该平台的唯一标识
+ * @property {string} [userName] - 用户昵称，可选
+ * @property {string} [command] - 命令名称，为 null 时表示普通消息
+ * @property {number} count - 记录次数，用于统计使用频率
+ * @property {Date} lastTime - 最后一次记录的时间
+ * @property {string} [guildName] - 群组/频道名称，可选
  */
 export interface StatRecord {
   platform: string
@@ -108,6 +109,11 @@ export interface StatRecord {
   guildName?: string
 }
 
+/**
+ * 历史命令记录结构
+ * @interface LegacyCommandRecord
+ * @description 用于兼容旧版统计数据的结构
+ */
 interface LegacyCommandRecord {
   name: string
   userId: string
@@ -118,6 +124,15 @@ interface LegacyCommandRecord {
   count: number
 }
 
+/**
+ * 用户绑定记录结构
+ * @interface BindingRecord
+ * @description 存储用户跨平台账号绑定关系
+ * @property {string} pid - 平台用户 ID
+ * @property {string} platform - 平台标识
+ * @property {number} aid - 关联账号 ID
+ * @property {number} bid - 绑定记录 ID
+ */
 interface BindingRecord {
   pid: string
   platform: string

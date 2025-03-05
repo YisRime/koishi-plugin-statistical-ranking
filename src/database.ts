@@ -2,6 +2,11 @@ import { Context } from 'koishi'
 import { Config, StatRecord } from './index'
 import { utils } from './utils'
 
+/**
+ * 目标对象接口
+ * @interface Target
+ * @description 用于权限检查的目标对象结构
+ */
 interface Target {
   platform: string
   guildId: string
@@ -11,11 +16,13 @@ interface Target {
 /**
  * @internal
  * 数据库操作相关函数集合
+ * @description 提供数据库初始化、记录保存、权限检查等核心功能
  */
 export const database = {
   /**
    * 初始化数据库表结构
-   * @param ctx - Koishi上下文
+   * @param ctx - Koishi 上下文
+   * @description 创建并定义 analytics.stat 表的结构
    */
   initialize(ctx: Context) {
     ctx.model.extend('analytics.stat', {
@@ -34,8 +41,9 @@ export const database = {
 
   /**
    * 保存统计记录
-   * @param ctx Koishi上下文
-   * @param data 记录数据
+   * @param ctx - Koishi 上下文
+   * @param data - 需要保存的记录数据
+   * @description 检查权限并更新或插入统计记录
    */
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
     if (!data.platform || !data.guildId || !data.userId) {
@@ -50,10 +58,7 @@ export const database = {
     }
 
     const config = ctx.config.statistical_ranking
-
-    if (!await database.checkPermissions(config, target)) {
-      return
-    }
+    if (!(await database.checkPermissions(config, target))) return
 
     await database.upsertRecord(ctx, data)
   },
@@ -78,27 +83,26 @@ export const database = {
     return true
   },
 
+  /**
+   * 批量更新或插入记录
+   * @param ctx - Koishi 上下文
+   * @param data - 记录数据
+   * @description 使用 upsert 操作保存记录，出错时记录日志
+   */
   async upsertRecord(ctx: Context, data: Partial<StatRecord>) {
-    if (!data.platform || !data.guildId || !data.userId) {
-      ctx.logger.warn('记录数据无效:', data)
-      return
-    }
-
-    const record = {
-      platform: data.platform,
-      guildId: data.guildId,
-      userId: data.userId,
-      command: data.command ?? null,
-      userName: data.userName || '',
-      guildName: data.guildName || '',
-      count: 1,
-      lastTime: new Date()
-    }
-
     try {
-      await ctx.database.upsert('analytics.stat', [record], ['count'])
+      await ctx.database.upsert('analytics.stat', [{
+        platform: data.platform,
+        guildId: data.guildId,
+        userId: data.userId,
+        command: data.command ?? null,
+        userName: data.userName || '',
+        guildName: data.guildName || '',
+        count: 1,
+        lastTime: new Date()
+      }], ['count'])
     } catch (e) {
-      ctx.logger.error('保存记录失败:', e, record)
+      ctx.logger.error('保存记录失败:', e, data)
     }
   },
 
