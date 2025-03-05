@@ -91,7 +91,7 @@ declare module 'koishi' {
  * @property {string} platform - 平台标识
  * @property {string} guildId - 群组ID
  * @property {string} userId - 用户ID
- * @property {string} [userNickname] - 用户昵称
+ * @property {string} [userName] - 用户昵称
  * @property {string} [command] - 命令名称
  * @property {number} count - 记录次数
  * @property {Date} lastTime - 最后记录时间
@@ -101,7 +101,7 @@ export interface StatRecord {
   platform: string
   guildId: string
   userId: string
-  userNickname?: string
+  userName?: string
   command?: string
   count: number
   lastTime: Date
@@ -140,21 +140,21 @@ interface BindingRecord {
 export async function apply(ctx: Context, config: Config) {
   database.initialize(ctx)
 
-  ctx.on('command/before-execute', async ({session, command}) =>
-    database.saveRecord(ctx, {
-      platform: session.platform,
-      guildId: utils.getGuildId(session),
-      userId: await utils.getPlatformId(session),
-      command: command.name
-    }))
+  const handleRecord = async (session: any, command?: string) => {
+    const sessionInfo = await utils.getSessionInfo(session)
+    await database.saveRecord(ctx, {
+      ...sessionInfo,
+      command
+    })
+  }
 
-  ctx.on('message', async (session) =>
-    database.saveRecord(ctx, {
-      platform: session.platform,
-      guildId: utils.getGuildId(session),
-      userId: await utils.getPlatformId(session),
-      command: null
-    }))
+  ctx.on('command/before-execute', ({session, command}) =>
+    handleRecord(session, command.name)
+  )
+
+  ctx.on('message', (session) =>
+    handleRecord(session, null)
+  )
 
   const stat = ctx.command('stat', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
@@ -200,13 +200,6 @@ export async function apply(ctx: Context, config: Config) {
       const title = conditions.length
         ? `${conditions.join('、')}的发言统计 ——`
         : '全局发言统计 ——'
-
-      const nicknameStats = new StatMap()
-      for (const record of records) {
-        if (record.userNickname) {
-          nicknameStats.add(record.userId, 0, new Date())
-        }
-      }
 
       const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
         const name = await utils.getName(session, userId, 'user')

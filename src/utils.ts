@@ -53,34 +53,7 @@ export class StatMap {
  */
 export const utils = {
   /**
-   * 统一处理异步获取名称的错误
-   * @param fn - 异步函数，用于获取名称
-   * @returns 获取到的名称或null
-   */
-  async safeGetName(fn: () => Promise<any>): Promise<string | null> {
-    try {
-      const result = await fn()
-      return result?.nickname || result?.username || result?.name || null
-    } catch {
-      return null
-    }
-  },
-
-  /**
-   * @private
-   * 名称获取队列相关变量
-   */
-  _nameQueue: new Map<string, Promise<string>>(),
-  _queueCount: 0,
-  _batchSize: 10,
-  _batchDelay: 100,
-
-  /**
    * 批量获取用户或群组名称
-   * @param session - Koishi会话对象
-   * @param id - 用户或群组ID
-   * @param type - 类型：'user' 或 'guild'
-   * @returns Promise<string> 名称或ID
    */
   async getName(session: any, id: string, type: NameType): Promise<string> {
     const cacheKey = `${type}:${id}`
@@ -90,11 +63,20 @@ export const utils = {
     }
 
     const namePromise = (async () => {
-      const name = await (type === 'user'
-        ? utils.safeGetName(() => session.bot.getGuildMember?.(session.guildId, id))
-        : utils.safeGetName(() => session.bot.getGuild?.(id)))
-
-      return name || id
+      try {
+        if (type === 'user') {
+          if (session.userId === id) {
+            return session.username || session.nickname || id
+          }
+          const result = await session.bot.getGuildMember?.(session.guildId, id)
+          return result?.nickname || result?.username || id
+        } else {
+          const result = await session.bot.getGuild?.(id)
+          return result?.name || id
+        }
+      } catch {
+        return id
+      }
     })()
 
     utils._nameQueue.set(cacheKey, namePromise)
@@ -109,11 +91,11 @@ export const utils = {
     return namePromise
   },
 
-  /**
-   * 将时间转换为"多久之前"的格式
-   * @param date 目标时间
-   * @returns 格式化后的字符串
-   */
+  _nameQueue: new Map<string, Promise<string>>(),
+  _queueCount: 0,
+  _batchSize: 10,
+  _batchDelay: 100,
+
   formatTimeAgo(date: Date): string {
     if (isNaN(date.getTime())) {
       return '未知时间'.padStart(9)
@@ -125,7 +107,7 @@ export const utils = {
     }
 
     const diff = Math.max(0, now - date.getTime())
-    if (diff < 300000) return '一会前'.padStart(9)
+    if (diff < 60000) return '一会前'.padStart(9)
 
     const units = [
       { div: 31536000000, unit: '年' },
@@ -152,27 +134,22 @@ export const utils = {
   },
 
   /**
-   * 验证和规范化查询选项
-   * @param options - 查询选项对象
-   * @returns 标准化后的查询选项
+   * 验证和规范化查询选项，并直接构建数据库查询
    */
-  normalizeQueryOptions(options: QueryOptions): Required<QueryOptions> {
-    return {
-      user: options.user || '',
-      guild: options.guild || '',
-      platform: options.platform || '',
-      command: options.command || ''
-    }
+  buildQueryFromOptions(options: QueryOptions) {
+    const query: Record<string, any> = {}
+    if (options.user) query.userId = options.user
+    if (options.guild) query.guildId = options.guild
+    if (options.platform) query.platform = options.platform
+    if (options.command) query.command = options.command
+    return query
   },
 
   /**
    * 格式化查询条件为可读文本
-   * @param options - 查询选项
-   * @returns 格式化后的条件数组
    */
   formatConditions(options: QueryOptions): string[] {
-    const normalized = utils.normalizeQueryOptions(options)
-    return Object.entries(normalized)
+    return Object.entries(options)
       .filter(([_, value]) => value)
       .map(([key, value]) => {
         switch(key) {
@@ -186,32 +163,6 @@ export const utils = {
       .filter(Boolean)
   },
 
-  /**
-   * 将查询选项转换为数据库查询条件
-   * @param options 查询选项
-   * @returns 数据库查询对象
-   */
-  buildQueryFromOptions(options: QueryOptions) {
-    const normalized = utils.normalizeQueryOptions(options)
-    const query: Record<string, any> = {}
-
-    if (normalized.user) query.userId = normalized.user
-    if (normalized.guild) query.guildId = normalized.guild
-    if (normalized.platform) query.platform = normalized.platform
-    if (normalized.command) query.command = normalized.command
-
-    return query
-  },
-
-  /**
-   * 处理统计记录，聚合并格式化结果
-   * @param records 统计记录数组
-   * @param aggregateKey 聚合键名
-   * @param formatFn 可选的格式化函数
-   * @param sortBy 排序方式：'count' 按次数或 'key' 按键名
-   * @param truncateId 是否截断ID (仅用于展示用户/群组ID)
-   * @returns 格式化后的结果数组
-   */
   async processStatRecords(
     records: StatRecord[],
     aggregateKey: keyof StatRecord,
@@ -241,38 +192,17 @@ export const utils = {
   },
 
   /**
-   * 检查目标是否匹配规则
-   * @param rule 规则字符串 platform:guild:user
-   * @param target 目标对象
-   * @returns 是否匹配
-   */
-  matchRule(rule: string, target: { platform: string, guildId: string, userId: string }): boolean {
-    const parts = rule.split(':')
-    const [rulePlatform = '', ruleGuild = '', ruleUser = ''] = parts
-
-    if (ruleUser && target.userId === ruleUser) return true
-    if (ruleGuild && target.guildId === ruleGuild) return true
-    if (rulePlatform && target.platform === rulePlatform) return true
-
-    return false
-  },
-
-  /**
-   * 检查目标是否在列表中匹配
-   * @param list 规则列表
-   * @param target 目标对象
-   * @returns 是否匹配
+   * 检查目标是否匹配规则列表
    */
   matchRuleList(list: string[], target: { platform: string, guildId: string, userId: string }): boolean {
-    return list.some(rule => utils.matchRule(rule, target))
+    return list.some(rule => {
+      const [rulePlatform = '', ruleGuild = '', ruleUser = ''] = rule.split(':')
+      return (ruleUser && target.userId === ruleUser) ||
+             (ruleGuild && target.guildId === ruleGuild) ||
+             (rulePlatform && target.platform === rulePlatform)
+    })
   },
 
-  /**
-   * 获取统计数据中的唯一键列表
-   * @param records 统计记录数组
-   * @param key 要提取的键名
-   * @returns 唯一值数组
-   */
   getUniqueKeys(records: StatRecord[], key: keyof StatRecord): string[] {
     const stats = new StatMap()
     for (const record of records) {
@@ -281,20 +211,10 @@ export const utils = {
     return stats.entries().map(([key]) => key).filter(Boolean)
   },
 
-  /**
-   * 获取会话的群组ID
-   * @param session 会话对象
-   * @returns 群组ID
-   */
   getGuildId(session: any): string {
     return session.guildId || session.groupId || session.channelId || 'private'
   },
 
-  /**
-   * 获取用户的平台ID
-   * @param session 会话对象
-   * @returns Promise<string> 平台ID
-   */
   async getPlatformId(session: any): Promise<string> {
     if (!session?.userId) return ''
 
@@ -303,10 +223,34 @@ export const utils = {
       platform: session.platform
     })
 
-    if (binding?.pid) {
-      return binding.pid
+    return binding?.pid || session.userId
+  },
+
+  /**
+   * 获取会话完整信息
+   */
+  async getSessionInfo(session: any) {
+    const platform = session.platform
+    const guildId = utils.getGuildId(session)
+    const userId = await utils.getPlatformId(session)
+    const bot = session.bot
+
+    let userName = session.username || ''
+    if (!userName && bot?.getGuildMember) {
+      const userInfo = await bot.getGuildMember(guildId, userId).catch(() => null)
+      userName = userInfo?.nickname || userInfo?.username || ''
     }
 
-    return session.userId
+    const guildName = guildId === 'private'
+      ? ''
+      : (await bot?.getGuild?.(guildId).catch(() => null))?.name || ''
+
+    return {
+      platform,
+      guildId,
+      userId,
+      userName,
+      guildName
+    }
   },
 }
