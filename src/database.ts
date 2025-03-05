@@ -129,70 +129,61 @@ export const database = {
    */
   async importLegacyData(ctx: Context, session?: any, overwrite = false) {
     try {
-      if (!Object.keys(ctx.database.tables).includes('analytics.command')) {
+      if (!ctx.database.tables['analytics.command']) {
         throw new Error('找不到历史数据表')
       }
 
-      const records = await ctx.database.get('analytics.command', {})
+      const [records, bindings] = await Promise.all([
+        ctx.database.get('analytics.command', {}),
+        ctx.database.get('binding', {})
+      ])
+
       if (!records.length) throw new Error('历史数据为空')
-
       session?.send(`开始导入 ${records.length} 条记录...`)
-
-      if (overwrite) {
-        await ctx.database.remove('analytics.stat', {})
-        session?.send('已清空现有数据')
-      }
-
-      const bindings = await ctx.database.get('binding', {})
-      const userIdMap = new Map(bindings
-        .filter(b => b.aid)
-        .map(b => [b.aid.toString(), { pid: b.pid, platform: b.platform }]))
 
       const stats = { imported: 0, skipped: 0, error: 0 }
       const skipReasons = new Map<string, number>()
       const mergedRecords = new Map()
+      const userIdMap = new Map(bindings
+        .filter(b => b.aid)
+        .map(b => [b.aid.toString(), { pid: b.pid, platform: b.platform }]))
 
-      for (const cmd of records) {
-        try {
-          if (!cmd.userId || !cmd.channelId) {
-            this.incrementStat(skipReasons, '记录缺少必要字段', stats, 'skipped')
-            continue
-          }
+      overwrite && await ctx.database.remove('analytics.stat', {})
 
-          const binding = userIdMap.get(cmd.userId.toString())
-          if (!binding) {
-            this.incrementStat(skipReasons, `未找到用户 ${cmd.userId} 的绑定数据`, stats, 'skipped')
-            continue
-          }
-
-          const timestamp = new Date((cmd.date * 86400000) + (cmd.hour * 3600000))
-          if (isNaN(timestamp.getTime())) {
-            this.incrementStat(skipReasons, `无效时间戳: date=${cmd.date}, hour=${cmd.hour}`, stats, 'error')
-            continue
-          }
-
-          const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${cmd.name || ''}`
-          const current = mergedRecords.get(key) || {
-            platform: binding.platform,
-            guildId: cmd.channelId,
-            userId: binding.pid,
-            command: cmd.name || null,
-            count: 0,
-            lastTime: timestamp
-          }
-
-          current.count += (cmd.count || 1)
-          if (timestamp > current.lastTime) current.lastTime = timestamp
-          mergedRecords.set(key, current)
-        } catch (e) {
-          this.incrementStat(skipReasons, e.message || '未知错误', stats, 'error')
-          ctx.logger.error('处理记录失败:', e, cmd)
+      records.forEach(cmd => {
+        if (!cmd.userId || !cmd.channelId || !userIdMap.has(cmd.userId.toString()) ||
+            !cmd.date || !Number.isFinite(cmd.date) || !Number.isFinite(cmd.hour)) {
+          skipReasons.set('记录无效或缺少绑定数据', (skipReasons.get('记录无效或缺少绑定数据') || 0) + 1)
+          stats.skipped++
+          return
         }
-      }
 
-      if (mergedRecords.size) {
-        const batch = Array.from(mergedRecords.values())
-        for (const record of batch) {
+        const binding = userIdMap.get(cmd.userId.toString())
+        const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${cmd.name || ''}`
+        const timestamp = new Date(Math.max(0, (cmd.date * 86400000) + ((cmd.hour || 0) * 3600000)))
+
+        if (isNaN(timestamp.getTime())) {
+          skipReasons.set('时间戳无效', (skipReasons.get('时间戳无效') || 0) + 1)
+          stats.skipped++
+          return
+        }
+
+        const existingRecord = mergedRecords.get(key)
+        mergedRecords.set(key, {
+          platform: binding.platform,
+          guildId: cmd.channelId,
+          userId: binding.pid,
+          command: cmd.name || null,
+          count: (existingRecord?.count || 0) + (cmd.count || 1),
+          lastTime: existingRecord
+            ? new Date(Math.max(existingRecord.lastTime.getTime(), timestamp.getTime()))
+            : timestamp
+        })
+      })
+
+      const batch = Array.from(mergedRecords.values())
+      await Promise.all(batch.map(async record => {
+        try {
           const query = {
             platform: record.platform,
             guildId: record.guildId,
@@ -200,46 +191,45 @@ export const database = {
             command: record.command
           }
 
-          const existing = await ctx.database.get('analytics.stat', query)
-          if (existing.length) {
-            await ctx.database.set('analytics.stat', query, {
-              count: existing[0].count + record.count,
-              lastTime: record.lastTime > existing[0].lastTime ? record.lastTime : existing[0].lastTime
-            })
-          } else {
-            await ctx.database.create('analytics.stat', record)
+          const [existing] = await ctx.database.get('analytics.stat', query)
+          const update = {
+            count: record.count,
+            lastTime: record.lastTime,
+            userName: '',
+            guildName: ''
           }
+
+          if (existing && !overwrite) {
+            update.count += existing.count
+            update.lastTime = new Date(Math.max(
+              existing.lastTime?.getTime() || 0,
+              record.lastTime.getTime()
+            ))
+            update.userName = existing.userName || ''
+            update.guildName = existing.guildName || ''
+          }
+
+          await ctx.database[existing ? 'set' : 'create']('analytics.stat', query, update)
+          stats.imported++
+        } catch (err) {
+          ctx.logger.warn('导入单条记录失败:', err)
+          stats.error++
         }
-        stats.imported = batch.length
-      }
+      }))
 
-      return this.generateReport(records.length, stats, skipReasons)
+      return [
+        `导入完成：总计 ${records.length} 条记录`,
+        `- 成功：${stats.imported} 条`,
+        `- 跳过：${stats.skipped} 条`,
+        `- 失败：${stats.error} 条`,
+        skipReasons.size ? '\n跳过原因：' : '',
+        ...Array.from(skipReasons).map(([reason, count]) => `- ${reason}: ${count} 条`)
+      ].filter(Boolean).join('\n')
+
     } catch (e) {
-      const errorMsg = `导入失败：${e.message}`
-      ctx.logger.error(errorMsg)
-      throw new Error(errorMsg)
+      ctx.logger.error('导入失败:', e)
+      throw e
     }
-  },
-
-  incrementStat(reasons: Map<string, number>, reason: string, stats: any, type: 'skipped' | 'error') {
-    reasons.set(reason, (reasons.get(reason) || 0) + 1)
-    stats[type]++
-  },
-
-  generateReport(total: number, stats: any, reasons: Map<string, number>) {
-    const report = [
-      `导入完成：总计 ${total} 条记录`,
-      `- 成功：${stats.imported} 条`,
-      `- 跳过：${stats.skipped} 条`,
-      `- 失败：${stats.error} 条`,
-      '\n原因统计：'
-    ]
-
-    for (const [reason, count] of reasons) {
-      report.push(`- ${reason}: ${count} 条`)
-    }
-
-    return report.join('\n')
   },
 
   /**
@@ -254,9 +244,9 @@ export const database = {
     guildId?: string
     command?: string
   }) {
-
     if (!Object.values(options).some(Boolean)) {
       await ctx.database.drop('analytics.stat')
+      await database.initialize(ctx)
       return -1
     }
 

@@ -155,21 +155,37 @@ interface BindingRecord {
 export async function apply(ctx: Context, config: Config) {
   database.initialize(ctx)
 
+  // 简化事件处理
   const handleRecord = async (session: any, command?: string) => {
-    const sessionInfo = await utils.getSessionInfo(session)
-    await database.saveRecord(ctx, {
-      ...sessionInfo,
-      command
-    })
+    const info = await utils.getSessionInfo(session)
+    info && await database.saveRecord(ctx, { ...info, command })
   }
 
-  ctx.on('command/before-execute', ({session, command}) =>
-    handleRecord(session, command.name)
-  )
+  ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
+  ctx.on('message', (session) => handleRecord(session, null))
 
-  ctx.on('message', (session) =>
-    handleRecord(session, null)
-  )
+  // 提取公共查询处理逻辑
+  const handleStatQuery = async (options: any, type: 'command' | 'user' | 'guild') => {
+    const query = utils.buildQueryFromOptions(options)
+    if (type === 'user') query.command = null
+    if (type === 'command') query.command = options.command || { $not: null }
+
+    const records = await ctx.database.get('analytics.stat', query)
+    if (!records?.length) return '未找到记录'
+
+    const typeMap = {
+      command: '命令',
+      user: '发言',
+      guild: '群组'
+    }
+
+    const conditions = utils.formatConditions(options)
+    const title = conditions.length
+      ? `${conditions.join('、')}的${typeMap[type]}统计 ——`
+      : `全局${typeMap[type]}统计 ——`
+
+    return { records, title }
+  }
 
   const stat = ctx.command('stat', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
@@ -177,27 +193,11 @@ export async function apply(ctx: Context, config: Config) {
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .action(async ({options}) => {
-      const baseQuery = utils.buildQueryFromOptions({
-        user: options.user,
-        guild: options.guild,
-        platform: options.platform
-      })
+      const result = await handleStatQuery(options, 'command')
+      if (typeof result === 'string') return result
 
-      const query = {
-        ...baseQuery,
-        command: options.command ? options.command : { $not: null }
-      }
-
-      const records = await ctx.database.get('analytics.stat', query)
-      if (!records?.length) return '未找到记录'
-
-      const conditions = utils.formatConditions(options)
-      const title = conditions.length
-        ? `${conditions.join('、')}的命令统计 ——`
-        : '全局命令统计 ——'
-
-      const lines = await utils.processStatRecords(records, 'command', null, 'key', false)
-      return title + '\n\n' + lines.join('\n')
+      const lines = await utils.processStatRecords(result.records, 'command', null, 'key')
+      return result.title + '\n\n' + lines.join('\n')
     })
 
   stat.subcommand('.user', '查看发言统计')
@@ -205,67 +205,16 @@ export async function apply(ctx: Context, config: Config) {
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .action(async ({session, options}) => {
-      const query = utils.buildQueryFromOptions(options)
-      query.command = null
-
-      const records = await ctx.database.get('analytics.stat', query)
-      if (!records?.length) return '未找到记录'
-
-      const conditions = utils.formatConditions({ ...options })
-      const title = conditions.length
-        ? `${conditions.join('、')}的发言统计 ——`
-        : '全局发言统计 ——'
+      const result = await handleStatQuery(options, 'user')
+      if (typeof result === 'string') return result
 
       const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
         const name = await utils.getName(session, userId, 'user')
-        return `${name.padEnd(10, ' ')}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
+        return `${name.padEnd(10)}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
       }
 
-      const lines = await utils.processStatRecords(records, 'userId', formatUserStat, 'count')
-      return title + '\n\n' + lines.join('\n')
-    })
-
-  stat.subcommand('.list', '查看类型列表', { authority: 3 })
-    .action(async ({ session }) => {
-      const records = await ctx.database.get('analytics.stat', {})
-      if (!records.length) return '未找到记录'
-
-      const platforms = utils.getUniqueKeys(records, 'platform')
-      const users = utils.getUniqueKeys(records, 'userId')
-      const guilds = utils.getUniqueKeys(records, 'guildId')
-      const commands = utils.getUniqueKeys(records, 'command')
-
-      const parts = []
-
-      if (platforms.length) {
-        parts.push(`平台列表：\n${platforms.join(',')}`)
-      }
-
-      if (users.length) {
-        const names = await Promise.all(users.map(id => utils.getName(session, id, 'user')))
-        parts.push(`用户列表：\n${names.map((name, i) => `${name} (${users[i].slice(0, 10)})`).join(',')}`) // 对用户ID进行截断
-      }
-
-      if (guilds.length) {
-        const guildInfos = records.reduce((map, record) => {
-          if (record.guildId && record.guildName) {
-            map.set(record.guildId, record.guildName)
-          }
-          return map
-        }, new Map<string, string>())
-
-        const names = await Promise.all(guilds.map(async id => {
-          const savedName = guildInfos.get(id)
-          return savedName || await utils.getName(session, id, 'guild')
-        }))
-        parts.push(`群组列表：\n${names.map((name, i) => `${name} (${guilds[i].slice(0, 10)})`).join(',')}`) // 对群组ID进行截断
-      }
-
-      if (commands.length) {
-        parts.push(`命令列表：\n${commands.join(',')}`)
-      }
-
-      return parts.join('\n')
+      const lines = await utils.processStatRecords(result.records, 'userId', formatUserStat, 'count')
+      return result.title + '\n\n' + lines.join('\n')
     })
 
   stat.subcommand('.guild', '查看群组统计')
@@ -274,47 +223,44 @@ export async function apply(ctx: Context, config: Config) {
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .action(async ({session, options}) => {
-      const query = utils.buildQueryFromOptions({
-        user: options.user,
-        guild: options.guild,
-        platform: options.platform,
-        command: options.command
-      })
-
-      const records = await ctx.database.get('analytics.stat', query)
-      if (!records.length) return '未找到记录'
-
-      const conditions = utils.formatConditions(options)
-      const title = conditions.length
-        ? `${conditions.join('、')}的群组统计 ——`
-        : '全局群组统计 ——'
-
-      const guildNameMap = new Map<string, string>()
-      for (const record of records) {
-        if (record.guildName) {
-          guildNameMap.set(record.guildId, record.guildName)
-        }
-      }
-      const needNameIds = Array.from(new Set(
-        records.filter(r => !guildNameMap.has(r.guildId))
-          .map(r => r.guildId)
-      ))
-      if (needNameIds.length > 0) {
-        const names = await Promise.all(
-          needNameIds.map(id => utils.getName(session, id, 'guild'))
-        )
-        needNameIds.forEach((id, index) => {
-          guildNameMap.set(id, names[index])
-        })
-      }
+      const result = await handleStatQuery(options, 'guild')
+      if (typeof result === 'string') return result
 
       const formatGuildStat = async (guildId: string, data: { count: number, lastTime: Date }) => {
-        const name = guildNameMap.get(guildId) || guildId.slice(0, 10)
-        return `${name.padEnd(10, ' ')}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
+        const name = await utils.getName(session, guildId, 'guild')
+        return `${name.padEnd(10)}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
       }
 
-      const lines = await utils.processStatRecords(records, 'guildId', formatGuildStat, 'count')
-      return title + '\n\n' + lines.join('\n')
+      const lines = await utils.processStatRecords(result.records, 'guildId', formatGuildStat, 'count')
+      return result.title + '\n\n' + lines.join('\n')
+    })
+
+  stat.subcommand('.list', '查看类型列表', { authority: 3 })
+    .action(async ({ session }) => {
+      const records = await ctx.database.get('analytics.stat', {})
+      if (!records?.length) return '未找到记录'
+
+      const formatList = async (key: keyof StatRecord, title: string, getName?: boolean) => {
+        const items = utils.getUniqueKeys(records, key)
+        if (!items.length) return null
+
+        if (!getName) return `${title}：\n${items.join(',')}`
+
+        const names = await Promise.all(
+          items.map(id => utils.getName(session, id, key === 'userId' ? 'user' : 'guild'))
+        )
+        return `${title}：\n${names.map((name, i) =>
+          `${name} (${items[i].slice(0, 10)})`).join(',')}`
+      }
+
+      const parts = await Promise.all([
+        formatList('platform', '平台列表'),
+        formatList('userId', '用户列表', true),
+        formatList('guildId', '群组列表', true),
+        formatList('command', '命令列表')
+      ])
+
+      return parts.filter(Boolean).join('\n')
     })
 
   if (config.enableClear) {
