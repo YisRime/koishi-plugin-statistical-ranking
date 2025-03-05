@@ -12,7 +12,7 @@ import { utils } from './utils'
  * @public
  */
 export const name = 'statistical-ranking'
-export const inject = { required: ['database'] }
+export const inject = ['database']  // 修改这里，移除 required 选项
 
 /**
  * 插件配置接口

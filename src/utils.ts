@@ -184,14 +184,18 @@ export const utils = {
   },
 
   async getPlatformId(session: any): Promise<string> {
-    if (!session?.userId) return ''
+    if (!session?.userId || !session?.platform || !session?.app?.database) return session?.userId || ''
 
-    const [binding] = await session.ctx.database.get('binding', {
-      aid: session.userId,
-      platform: session.platform
-    })
+    try {
+      const [binding] = await session.app.database.get('binding', {
+        aid: session.userId,
+        platform: session.platform
+      })
 
-    return binding?.pid || session.userId
+      return binding?.pid || session.userId
+    } catch (e) {
+      return session.userId || ''
+    }
   },
 
   /**
