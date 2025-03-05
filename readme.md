@@ -18,9 +18,13 @@
 - `enableImport`: 是否启用数据导入功能（默认关闭）
 - `enableClear`: 是否启用数据清除功能（默认关闭）
 - `enableBlacklist`: 是否启用黑名单功能（默认关闭）
+  - 当启用时，需要配置 `blacklist` 数组
 - `enableWhitelist`: 是否启用白名单功能（默认关闭）
+  - 当启用时，需要配置 `whitelist` 数组
 - `blacklist`: 黑名单列表（格式：platform:group:user）
+  - 例如: ['onebot:12345:67890', 'qq::12345', 'sandbox::', '.help']
 - `whitelist`: 白名单列表（格式：platform:group:user）
+  - 例如: ['onebot:12345:67890', 'qq::12345', 'telegram::', '.help']
 
 ## 命令
 
@@ -41,9 +45,25 @@
 - `-g [群组]` 指定群组统计
 - `-p [平台]` 指定平台统计
 
+### stat.guild
+
+查看群组统计数据
+
+- `-u [用户]` 指定用户统计
+- `-g [群组]` 指定群组统计
+- `-p [平台]` 指定平台统计
+- `-c [命令]` 指定命令统计（指定时显示命令统计，否则显示消息统计）
+
 ### stat.list
 
-查看统计列表,包括平台、用户、群组和命令列表
+查看统计列表（需要管理员权限）
+
+显示所有已记录的:
+
+- 平台列表
+- 用户列表（包含昵称和ID）
+- 群组列表（包含群名和ID）
+- 命令列表
 
 ### stat.clear
 
@@ -57,6 +77,6 @@
 
 ### stat.import
 
-导入历史统计数据（需要enableImport=true）
+导入历史统计数据（需要管理员权限且enableImport=true）
 
 - `-f` 覆盖现有数据

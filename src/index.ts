@@ -25,6 +25,24 @@ export interface Config {
   whitelist?: string[]
 }
 
+// 新增类型定义
+type StatType = 'command' | 'message'
+type NameType = 'user' | 'guild'
+
+interface QueryOptions {
+  type?: StatType
+  user?: string
+  guild?: string
+  platform?: string
+  command?: string
+}
+
+interface Target {
+  platform: string
+  guildId: string
+  userId: string
+}
+
 /**
  * 插件配置模式
  * 使用 Schema.intersect 组合多个配置块
@@ -82,24 +100,24 @@ declare module 'koishi' {
  * @interface StatRecord
  * @property {'command' | 'message'} type - 记录类型
  * @property {string} platform - 平台标识
- * @property {string} channelId - 频道ID
+ * @property {string} guildId - 群组ID
  * @property {string} userId - 用户ID
  * @property {string} [userNickname] - 用户昵称
  * @property {string} [command] - 命令名称
  * @property {number} count - 记录次数
  * @property {Date} lastTime - 最后记录时间
- * @property {string} [channelName] - 群组名称
+ * @property {string} [guildName] - 群组名称
  */
 interface StatRecord {
   type: 'command' | 'message'
   platform: string
-  channelId: string
+  guildId: string
   userId: string
   userNickname?: string
   command?: string
   count: number
   lastTime: Date
-  channelName?: string
+  guildName?: string
 }
 
 interface LegacyCommandRecord {
@@ -119,30 +137,86 @@ interface BindingRecord {
   bid: number
 }
 
-// 工具函数集合
+// 重构工具函数
+/**
+ * 统计数据聚合管理器
+ */
+class StatMap {
+  private data = new Map<string, { count: number, lastTime: Date }>()
+  private keyFormat: (key: string) => string
+
+  constructor(keyFormat?: (key: string) => string) {
+    this.keyFormat = keyFormat || ((k) => k)
+  }
+
+  add(key: string, count: number, time: Date) {
+    const formattedKey = this.keyFormat(key)
+    const curr = this.data.get(formattedKey) || { count: 0, lastTime: time }
+    curr.count += count
+    if (time > curr.lastTime) curr.lastTime = time
+    this.data.set(formattedKey, curr)
+  }
+
+  addRecord(record: StatRecord, key: keyof StatRecord) {
+    this.add(record[key] as string, record.count, record.lastTime)
+  }
+
+  entries() {
+    return Array.from(this.data.entries())
+  }
+
+  sortedEntries(sortBy: 'count' | 'key' = 'count') {
+    return this.entries().sort((a, b) =>
+      sortBy === 'count'
+        ? b[1].count - a[1].count
+        : a[0].localeCompare(b[0])
+    )
+  }
+}
+
 const utils = {
   /**
-   * 获取用户或群组名称
-   * @param session - Koishi会话对象
-   * @param id - 目标ID
-   * @param type - 目标类型：'user'用户或'guild'群组
-   * @returns 名称，获取失败则返回原ID
-   * @throws 不会抛出异常，失败时返回原ID
+   * 统一处理异步获取名称的错误
    */
-  async getName(session: any, id: string, type: 'user' | 'guild'): Promise<string> {
+  async safeGetName(fn: () => Promise<any>): Promise<string | null> {
     try {
-      if (type === 'user') {
-        const info = await session.bot.getGuildMember?.(session.channelId, id)
-        return info?.nickname || info?.username || id
-      } else {
-        const guilds = await session.bot.getGuildList()
-        const guild = (Array.isArray(guilds) ? guilds : [guilds])
-          .find(g => g.id === id)
-        return guild?.name || id
-      }
+      const result = await fn()
+      return result?.nickname || result?.username || result?.name || null
     } catch {
-      return id
+      return null
     }
+  },
+
+  _nameQueue: new Map<string, Promise<string>>(),
+  _queueCount: 0,
+  _batchSize: 10,
+  _batchDelay: 100,
+
+  async getName(session: any, id: string, type: NameType): Promise<string> {
+    const cacheKey = `${type}:${id}`
+
+    if (utils._nameQueue.has(cacheKey)) {
+      return utils._nameQueue.get(cacheKey)
+    }
+
+    const namePromise = (async () => {
+      const name = await (type === 'user'
+        ? utils.safeGetName(() => session.bot.getGuildMember?.(session.guildId, id))
+        : utils.safeGetName(() => session.bot.getGuild?.(id)))
+
+      return name || id
+    })()
+
+    utils._nameQueue.set(cacheKey, namePromise)
+    utils._queueCount++
+
+    if (utils._queueCount >= utils._batchSize) {
+      await new Promise(resolve => setTimeout(resolve, utils._batchDelay))
+      utils._nameQueue.clear()
+      utils._queueCount = 0
+    }
+
+    return namePromise
   },
 
   /**
@@ -188,24 +262,33 @@ const utils = {
   },
 
   /**
-   * 将查询选项转换为条件文本数组
-   * @param options 查询选项
-   * @returns 条件文本数组
+   * 验证和规范化查询选项
    */
-  formatConditions(options: {
-    type?: string
-    user?: string
-    group?: string
-    platform?: string
-    command?: string
-  }): string[] {
-    const conditions = []
-    if (options.type) conditions.push(options.type === 'command' ? '命令' : '消息')
-    if (options.user) conditions.push(`用户 ${options.user}`)
-    if (options.group) conditions.push(`群组 ${options.group}`)
-    if (options.platform) conditions.push(`平台 ${options.platform}`)
-    if (options.command) conditions.push(`命令 ${options.command}`)
-    return conditions
+  normalizeQueryOptions(options: QueryOptions): Required<QueryOptions> {
+    return {
+      type: options.type || 'command',
+      user: options.user || '',
+      guild: options.guild || '',
+      platform: options.platform || '',
+      command: options.command || ''
+    }
+  },
+
+  formatConditions(options: QueryOptions): string[] {
+    const normalized = utils.normalizeQueryOptions(options)
+    return Object.entries(normalized)
+      .filter(([_, value]) => value)
+      .map(([key, value]) => {
+        switch(key) {
+          case 'type': return ''  // 移除类型显示，避免重复
+          case 'user': return `用户 ${value}`
+          case 'guild': return `群组 ${value}`
+          case 'platform': return `平台 ${value}`
+          case 'command': return `命令 ${value}`
+          default: return ''
+        }
+      })
+      .filter(Boolean)
   },
 
   /**
@@ -213,18 +296,15 @@ const utils = {
    * @param options 查询选项
    * @returns 数据库查询对象
    */
-  buildQueryFromOptions(options: {
-    type?: 'command' | 'message'
-    user?: string
-    group?: string
-    platform?: string
-    command?: string
-  }) {
-    const query: any = { type: options.type || 'command' }
-    if (options.user) query.userId = options.user
-    if (options.group) query.channelId = options.group
-    if (options.platform) query.platform = options.platform
-    if (options.command) query.command = options.command
+  buildQueryFromOptions(options: QueryOptions) {
+    const normalized = utils.normalizeQueryOptions(options)
+    const query: Record<string, any> = { type: normalized.type }
+
+    if (normalized.user) query.userId = normalized.user
+    if (normalized.guild) query.guildId = normalized.guild
+    if (normalized.platform) query.platform = normalized.platform
+    if (normalized.command) query.command = normalized.command
+
     return query
   },
 
@@ -234,53 +314,49 @@ const utils = {
    * @param aggregateKey 聚合键名
    * @param formatFn 可选的格式化函数
    * @param sortBy 排序方式：'count' 按次数或 'key' 按键名
+   * @param truncateId 是否截断ID (仅用于展示用户/群组ID)
    * @returns 格式化后的结果数组
    */
   async processStatRecords(
     records: StatRecord[],
-    aggregateKey: string,
+    aggregateKey: keyof StatRecord,
     formatFn?: (key: string, data: { count: number, lastTime: Date }) => Promise<string>,
-    sortBy: 'count' | 'key' = 'count'
+    sortBy: 'count' | 'key' = 'count',
+    truncateId = false
   ) {
-    const stats = records.reduce((map, record) => {
-      const key = aggregateKey === 'command' ? record.command?.split('.')[0] || '' : record[aggregateKey]
-      const curr = map.get(key) || { count: 0, lastTime: record.lastTime }
-      curr.count += record.count
-      if (record.lastTime > curr.lastTime) curr.lastTime = record.lastTime
-      map.set(key, curr)
-      return map
-    }, new Map())
+    const keyFormat = aggregateKey === 'command'
+      ? (k: string) => k?.split('.')[0] || ''
+      : undefined
 
-    const sortedEntries = Array.from(stats.entries())
-      .sort((a, b) => sortBy === 'count'
-        ? b[1].count - a[1].count
-        : a[0].localeCompare(b[0]))
-
-    if (formatFn) {
-      return Promise.all(sortedEntries.map(([key, data]) => formatFn(key, data)))
+    const stats = new StatMap(keyFormat)
+    for (const record of records) {
+      stats.addRecord(record, aggregateKey)
     }
 
-    return sortedEntries.map(([key, {count, lastTime}]) =>
-      `${key.padEnd(10, ' ')}${count.toString().padStart(5)}次 ${utils.formatTimeAgo(lastTime)}`)
+    const entries = stats.sortedEntries(sortBy)
+
+    if (formatFn) {
+      return Promise.all(entries.map(([key, data]) => formatFn(key, data)))
+    }
+
+    return entries.map(([key, {count, lastTime}]) => {
+      const displayKey = truncateId ? key.slice(0, 10) : key
+      return `${displayKey.padEnd(10, ' ')}${count.toString().padStart(5)}次 ${utils.formatTimeAgo(lastTime)}`
+    })
   },
 
   /**
    * 检查目标是否匹配规则
-   * @param rule 规则字符串 platform:group:user
+   * @param rule 规则字符串 platform:guild:user
    * @param target 目标对象
    * @returns 是否匹配
    */
-  matchRule(rule: string, target: { platform: string, channelId: string, userId: string }): boolean {
+  matchRule(rule: string, target: { platform: string, guildId: string, userId: string }): boolean {
     const parts = rule.split(':')
-    const [rulePlatform = '', ruleGroup = '', ruleUser = ''] = parts
+    const [rulePlatform = '', ruleGuild = '', ruleUser = ''] = parts
 
-    // 优先检查用户
     if (ruleUser && target.userId === ruleUser) return true
-
-    // 检查群组
-    if (ruleGroup && target.channelId === ruleGroup) return true
-
-    // 最后检查平台
+    if (ruleGuild && target.guildId === ruleGuild) return true
     if (rulePlatform && target.platform === rulePlatform) return true
 
     return false
@@ -292,7 +368,7 @@ const utils = {
    * @param target 目标对象
    * @returns 是否匹配
    */
-  matchRuleList(list: string[], target: { platform: string, channelId: string, userId: string }): boolean {
+  matchRuleList(list: string[], target: { platform: string, guildId: string, userId: string }): boolean {
     return list.some(rule => utils.matchRule(rule, target))
   },
 
@@ -302,33 +378,46 @@ const utils = {
    * @param key 要提取的键名
    * @returns 唯一值数组
    */
-  getUniqueKeys(records: StatRecord[], key: 'platform' | 'channelId' | 'userId' | 'command'): string[] {
-    return Array.from(new Set(records.map(r => r[key]))).filter(Boolean)
-  }
+  getUniqueKeys(records: StatRecord[], key: keyof StatRecord): string[] {
+    const stats = new StatMap()
+    for (const record of records) {
+      stats.add(record[key] as string, 0, new Date())
+    }
+    return stats.entries().map(([key]) => key).filter(Boolean)
+  },
+
+  /**
+   * 获取会话的群组ID
+   * @param session 会话对象
+   * @returns 群组ID
+   */
+  getGuildId(session: any): string {
+    return session.guildId || session.groupId || session.channelId || 'private'
+  },
 }
 
-/**
- * 数据库操作工具集合
- * 包含数据表初始化、记录保存、数据导入和清除等功能
- */
 const database = {
   /**
    * 初始化数据库模型
    * @param ctx Koishi上下文
    */
   initialize(ctx: Context) {
+    // 重新定义数据库表结构，确保主键包含所有必要字段
     ctx.model.extend('analytics.stat', {
-      platform: 'string',
-      channelId: 'string',
-      channelName: 'string',
-      userId: 'string',
-      userNickname: 'string',
+      // 主键字段
       type: 'string',
-      command: 'string',
+      platform: 'string',
+      guildId: 'string',
+      userId: 'string',
+      command: { type: 'string', nullable: true },
+      // 非主键字段
+      guildName: 'string',
+      userNickname: 'string',
       count: 'unsigned',
       lastTime: 'timestamp',
     }, {
-      primary: ['type', 'platform', 'channelId', 'userId', 'command'],
+      // 定义复合主键
+      primary: ['type', 'platform', 'guildId', 'userId', 'command'],
     })
   },
 
@@ -338,69 +427,78 @@ const database = {
    * @param data 记录数据
    */
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
-    if (!data.type || !data.platform || !data.channelId || !data.userId) {
-      ctx.logger.warn('saveRecord: missing required fields', data)
+    if (!data.type || !data.platform || !data.guildId || !data.userId) {
+      ctx.logger.warn('Invalid record data:', data)
       return
     }
 
-    const config = ctx.config.statistical_ranking || {}
     const target = {
       platform: data.platform,
-      channelId: data.channelId,
+      guildId: data.guildId,
       userId: data.userId
     }
 
-    // 检查黑名单
-    if (config?.enableBlacklist && config?.blacklist?.length && utils.matchRuleList(config.blacklist, target)) {
+    const config = ctx.config.statistical_ranking
+
+    if (!await database.checkPermissions(config, target)) {
       return
     }
 
-    // 检查白名单
-    if (config?.enableWhitelist && config?.whitelist?.length && !utils.matchRuleList(config.whitelist, target)) {
-      return
-    }
+    await database.upsertRecord(ctx, data)
+  },
 
-    const query = {
+  async checkPermissions(config: Config, target: Target): Promise<boolean> {
+    if (config?.enableBlacklist && config?.blacklist?.length) {
+      if (utils.matchRuleList(config.blacklist, target)) {
+        return false
+      }
+    }
+    if (config?.enableWhitelist && config?.whitelist?.length) {
+      if (!utils.matchRuleList(config.whitelist, target)) {
+        return false
+      }
+    }
+    return true
+  },
+
+  async upsertRecord(ctx: Context, data: Partial<StatRecord>) {
+    // 构建完整的主键查询条件
+    const primaryKey = {
       type: data.type,
       platform: data.platform,
-      channelId: data.channelId,
+      guildId: data.guildId,
       userId: data.userId,
-      command: data.type === 'command' ? data.command || '' : '',
+      command: data.type === 'command' ? data.command : null,
+    }
+
+    // 验证主键完整性
+    if (!primaryKey.type || !primaryKey.platform || !primaryKey.guildId || !primaryKey.userId) {
+      ctx.logger.warn('Missing required primary key fields:', primaryKey)
+      return
     }
 
     try {
-      let userNickname = ''
-      let channelName = ''
-      try {
-        const bot = ctx.bots.find(bot => bot.platform === data.platform)
-        if (bot) {
-          // 获取用户昵称
-          const info = await bot.getGuildMember?.(data.channelId, data.userId)
-          userNickname = info?.nick || info?.name || ''
+      const [existing] = await ctx.database.get('analytics.stat', primaryKey)
+      const bot = ctx.bots.find(bot => bot.platform === data.platform)
 
-          // 获取群组名称
-          const guild = await bot.getChannel?.(data.channelId)
-          channelName = guild?.name || ''
-        }
-      } catch (e) {
-        ctx.logger.warn('Failed to get user/channel info:', e)
+      const [userInfo, guildInfo] = await Promise.all([
+        bot?.getGuildMember?.(data.guildId, data.userId).catch(() => null),
+        bot?.getGuild?.(data.guildId).catch(() => null)
+      ])
+
+      const updateData = {
+        count: (existing?.count || 0) + 1,
+        lastTime: new Date(),
+        userNickname: userInfo?.nick || userInfo?.name || existing?.userNickname || '',
+        guildName: guildInfo?.name || existing?.guildName || '',
       }
 
-      const existing = await ctx.database.get('analytics.stat', query)
-      if (existing.length) {
-        await ctx.database.set('analytics.stat', query, {
-          count: existing[0].count + 1,
-          lastTime: new Date(),
-          userNickname: userNickname || existing[0].userNickname,
-          channelName: channelName || existing[0].channelName,
-        })
+      if (existing) {
+        await ctx.database.set('analytics.stat', primaryKey, updateData)
       } else {
         await ctx.database.create('analytics.stat', {
-          ...query,
-          userNickname,
-          channelName,
-          count: 1,
-          lastTime: new Date(),
+          ...primaryKey,
+          ...updateData,
         })
       }
     } catch (e) {
@@ -435,17 +533,22 @@ const database = {
     }
 
     let importedCount = 0
-
     for (const cmd of legacyCommands) {
       const platform = cmd.platform || ''
       const key = `${platform}:${cmd.userId}`
       const realUserId = userIdMap.get(key) || cmd.userId
       const command = cmd.name || ''
+      const guildId = cmd.channelId || 'private'
+
+      if (!platform || !realUserId) {
+        ctx.logger.warn('Skipping invalid record:', cmd)
+        continue
+      }
 
       const query = {
         type: 'command' as const,
         platform,
-        channelId: cmd.channelId,
+        guildId,
         userId: realUserId,
         command,
       }
@@ -491,6 +594,8 @@ const database = {
       }
 
     }
+
+    return `导入完成，成功导入 ${importedCount} 条记录`
   },
 
   /**
@@ -503,7 +608,7 @@ const database = {
     type?: 'command' | 'message'
     userId?: string
     platform?: string
-    channelId?: string
+    guildId?: string
     command?: string
   }) {
     const query: any = {}
@@ -528,7 +633,7 @@ export async function apply(ctx: Context, config: Config) {
     database.saveRecord(ctx, {
       type: 'command',
       platform: session.platform,
-      channelId: session.channelId,
+      guildId: utils.getGuildId(session),
       userId: session.userId,
       command: command.name
     }))
@@ -537,69 +642,52 @@ export async function apply(ctx: Context, config: Config) {
     database.saveRecord(ctx, {
       type: 'message',
       platform: session.platform,
-      channelId: session.channelId,
+      guildId: utils.getGuildId(session),
       userId: session.userId
     }))
 
   const stat = ctx.command('stat', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
-    .option('group', '-g [group:string] 指定群组统计')
+    .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .action(async ({options}) => {
       const query = utils.buildQueryFromOptions({ ...options, type: 'command' })
       const records = await ctx.database.get('analytics.stat', query)
-      if (!records.length) return '未找到记录'
+      if (!records?.length) return '未找到记录'
 
-      const conditions = utils.formatConditions(options)
+      const conditions = utils.formatConditions({ ...options, type: 'command' })
       const title = conditions.length
-        ? `${conditions.join(' ')} 命令统计 ——`
+        ? `${conditions.join('、')}的命令统计 ——`
         : '全局命令统计 ——'
 
-      const lines = await utils.processStatRecords(records, 'command', null, 'key')
+      const lines = await utils.processStatRecords(records, 'command', null, 'key', false)
       return title + '\n\n' + lines.join('\n')
     })
 
   stat.subcommand('.user', '查看发言统计')
     .option('user', '-u [user:string] 指定用户统计')
-    .option('group', '-g [group:string] 指定群组统计')
+    .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .action(async ({session, options}) => {
       const query = utils.buildQueryFromOptions({ ...options, type: 'message' })
       const records = await ctx.database.get('analytics.stat', query)
-      if (!records.length) return '未找到记录'
+      if (!records?.length) return '未找到记录'
 
-      const conditions = utils.formatConditions(options)
+      const conditions = utils.formatConditions({ ...options, type: 'message' })
       const title = conditions.length
-        ? `${conditions.join(' ')} 发言统计 ——`
+        ? `${conditions.join('、')}的发言统计 ——`
         : '全局发言统计 ——'
 
-      // 创建用户ID到昵称的映射
-      const nicknameMap = new Map<string, string>()
+      const nicknameStats = new StatMap()
       for (const record of records) {
         if (record.userNickname) {
-          nicknameMap.set(record.userId, record.userNickname)
+          nicknameStats.add(record.userId, 0, new Date())
         }
       }
 
-      // 需要获取昵称的用户ID列表
-      const needNameIds = Array.from(new Set(
-        records.filter(r => !nicknameMap.has(r.userId))
-          .map(r => r.userId)
-      ))
-
-      // 批量获取昵称
-      if (needNameIds.length > 0) {
-        const names = await Promise.all(
-          needNameIds.map(id => utils.getName(session, id, 'user'))
-        )
-        needNameIds.forEach((id, index) => {
-          nicknameMap.set(id, names[index])
-        })
-      }
-
       const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
-        const name = nicknameMap.get(userId) || userId
+        const name = await utils.getName(session, userId, 'user')
         return `${name.padEnd(10, ' ')}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
       }
 
@@ -614,7 +702,7 @@ export async function apply(ctx: Context, config: Config) {
 
       const platforms = utils.getUniqueKeys(records, 'platform')
       const users = utils.getUniqueKeys(records, 'userId')
-      const groups = utils.getUniqueKeys(records, 'channelId')
+      const guilds = utils.getUniqueKeys(records, 'guildId')
       const commands = utils.getUniqueKeys(records, 'command')
 
       const parts = []
@@ -625,22 +713,22 @@ export async function apply(ctx: Context, config: Config) {
 
       if (users.length) {
         const names = await Promise.all(users.map(id => utils.getName(session, id, 'user')))
-        parts.push(`用户列表：\n${names.map((name, i) => `${name} (${users[i]})`).join(',')}`)
+        parts.push(`用户列表：\n${names.map((name, i) => `${name} (${users[i].slice(0, 10)})`).join(',')}`) // 对用户ID进行截断
       }
 
-      if (groups.length) {
-        const groupInfos = records.reduce((map, record) => {
-          if (record.channelId && record.channelName) {
-            map.set(record.channelId, record.channelName)
+      if (guilds.length) {
+        const guildInfos = records.reduce((map, record) => {
+          if (record.guildId && record.guildName) {
+            map.set(record.guildId, record.guildName)
           }
           return map
         }, new Map<string, string>())
 
-        const names = await Promise.all(groups.map(async id => {
-          const savedName = groupInfos.get(id)
+        const names = await Promise.all(guilds.map(async id => {
+          const savedName = guildInfos.get(id)
           return savedName || await utils.getName(session, id, 'guild')
         }))
-        parts.push(`群组列表：\n${names.map((name, i) => `${name} (${groups[i]})`).join(',')}`)
+        parts.push(`群组列表：\n${names.map((name, i) => `${name} (${guilds[i].slice(0, 10)})`).join(',')}`) // 对群组ID进行截断
       }
 
       if (commands.length) {
@@ -650,12 +738,56 @@ export async function apply(ctx: Context, config: Config) {
       return parts.join('\n')
     })
 
+  stat.subcommand('.guild', '查看群组统计')
+    .option('user', '-u [user:string] 指定用户统计')
+    .option('guild', '-g [guild:string] 指定群组统计')
+    .option('platform', '-p [platform:string] 指定平台统计')
+    .option('command', '-c [command:string] 指定命令统计')
+    .action(async ({session, options}) => {
+      const type = options.command ? 'command' : 'message'
+      const query = utils.buildQueryFromOptions({ ...options, type })
+      const records = await ctx.database.get('analytics.stat', query)
+      if (!records.length) return '未找到记录'
+
+      const conditions = utils.formatConditions(options)
+      const title = conditions.length
+        ? `${conditions.join('、')}的群组统计 ——`
+        : '全局群组统计 ——'
+
+      const guildNameMap = new Map<string, string>()
+      for (const record of records) {
+        if (record.guildName) {
+          guildNameMap.set(record.guildId, record.guildName)
+        }
+      }
+      const needNameIds = Array.from(new Set(
+        records.filter(r => !guildNameMap.has(r.guildId))
+          .map(r => r.guildId)
+      ))
+      if (needNameIds.length > 0) {
+        const names = await Promise.all(
+          needNameIds.map(id => utils.getName(session, id, 'guild'))
+        )
+        needNameIds.forEach((id, index) => {
+          guildNameMap.set(id, names[index])
+        })
+      }
+
+      const formatGuildStat = async (guildId: string, data: { count: number, lastTime: Date }) => {
+        const name = guildNameMap.get(guildId) || guildId.slice(0, 10)
+        return `${name.padEnd(10, ' ')}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
+      }
+
+      const lines = await utils.processStatRecords(records, 'guildId', formatGuildStat, 'count')
+      return title + '\n\n' + lines.join('\n')
+    })
+
   if (config.enableClear) {
     stat.subcommand('.clear', '清除统计数据', { authority: 3 })
       .option('type', '-t <type:string> 指定类型')
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
-      .option('group', '-g [group:string] 指定群组')
+      .option('guild', '-g [guild:string] 指定群组')
       .option('command', '-c [command:string] 指定命令')
       .action(async ({ options }) => {
         const type = options.type as 'command' | 'message'
@@ -667,13 +799,16 @@ export async function apply(ctx: Context, config: Config) {
           type,
           userId: options.user,
           platform: options.platform,
-          channelId: options.group,
+          guildId: options.guild,
           command: options.command
         })
 
-        const conditions = utils.formatConditions(options)
+        const conditions = utils.formatConditions({
+          ...options,
+          type: options.type as StatType
+        })
         return conditions.length
-          ? `已删除${conditions.join('、')} 的统计记录`
+          ? `已删除${conditions.join('、')}的统计记录`
           : '已删除所有统计记录'
       })
   }
