@@ -98,7 +98,6 @@ declare module 'koishi' {
 /**
  * 统计记录数据结构
  * @interface StatRecord
- * @property {'command' | 'message'} type - 记录类型
  * @property {string} platform - 平台标识
  * @property {string} guildId - 群组ID
  * @property {string} userId - 用户ID
@@ -109,7 +108,7 @@ declare module 'koishi' {
  * @property {string} [guildName] - 群组名称
  */
 interface StatRecord {
-  type: 'command' | 'message'
+  id?: number
   platform: string
   guildId: string
   userId: string
@@ -280,7 +279,7 @@ const utils = {
       .filter(([_, value]) => value)
       .map(([key, value]) => {
         switch(key) {
-          case 'type': return ''  // 移除类型显示，避免重复
+          case 'type': return ''
           case 'user': return `用户 ${value}`
           case 'guild': return `群组 ${value}`
           case 'platform': return `平台 ${value}`
@@ -298,12 +297,14 @@ const utils = {
    */
   buildQueryFromOptions(options: QueryOptions) {
     const normalized = utils.normalizeQueryOptions(options)
-    const query: Record<string, any> = { type: normalized.type }
+    const query: Record<string, any> = {
+      command: normalized.type === 'message' ? null : undefined
+    }
 
     if (normalized.user) query.userId = normalized.user
     if (normalized.guild) query.guildId = normalized.guild
     if (normalized.platform) query.platform = normalized.platform
-    if (normalized.command) query.command = normalized.command
+    if (normalized.type === 'command' && normalized.command) query.command = normalized.command
 
     return query
   },
@@ -397,27 +398,21 @@ const utils = {
 }
 
 const database = {
-  /**
-   * 初始化数据库模型
-   * @param ctx Koishi上下文
-   */
   initialize(ctx: Context) {
-    // 重新定义数据库表结构，确保主键包含所有必要字段
     ctx.model.extend('analytics.stat', {
-      // 主键字段
-      type: 'string',
+      id: 'unsigned',
       platform: 'string',
       guildId: 'string',
       userId: 'string',
       command: { type: 'string', nullable: true },
-      // 非主键字段
-      guildName: 'string',
-      userNickname: 'string',
+      guildName: { type: 'string', nullable: true },
+      userNickname: { type: 'string', nullable: true },
       count: 'unsigned',
       lastTime: 'timestamp',
     }, {
-      // 定义复合主键
-      primary: ['type', 'platform', 'guildId', 'userId', 'command'],
+      autoInc: true,
+      primary: 'id',
+      unique: [['platform', 'guildId', 'userId', 'command']],
     })
   },
 
@@ -427,7 +422,7 @@ const database = {
    * @param data 记录数据
    */
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
-    if (!data.type || !data.platform || !data.guildId || !data.userId) {
+    if (!data.platform || !data.guildId || !data.userId) {
       ctx.logger.warn('Invalid record data:', data)
       return
     }
@@ -462,23 +457,21 @@ const database = {
   },
 
   async upsertRecord(ctx: Context, data: Partial<StatRecord>) {
-    // 构建完整的主键查询条件
-    const primaryKey = {
-      type: data.type,
+    const query = {
       platform: data.platform,
       guildId: data.guildId,
       userId: data.userId,
-      command: data.type === 'command' ? data.command : null,
+      command: data.command ?? null,
     }
 
-    // 验证主键完整性
-    if (!primaryKey.type || !primaryKey.platform || !primaryKey.guildId || !primaryKey.userId) {
-      ctx.logger.warn('Missing required primary key fields:', primaryKey)
+    // 验证必要字段
+    if (!query.platform || !query.guildId || !query.userId) {
+      ctx.logger.warn('Missing required fields:', query)
       return
     }
 
     try {
-      const [existing] = await ctx.database.get('analytics.stat', primaryKey)
+      const [existing] = await ctx.database.get('analytics.stat', query)
       const bot = ctx.bots.find(bot => bot.platform === data.platform)
 
       const [userInfo, guildInfo] = await Promise.all([
@@ -494,15 +487,16 @@ const database = {
       }
 
       if (existing) {
-        await ctx.database.set('analytics.stat', primaryKey, updateData)
+        await ctx.database.set('analytics.stat', query, updateData)
       } else {
         await ctx.database.create('analytics.stat', {
-          ...primaryKey,
+          ...query,
           ...updateData,
+          count: 1,
         })
       }
     } catch (e) {
-      ctx.logger.error('Failed to save stat record:', e)
+      ctx.logger.error('Failed to save stat record:', e, query)
     }
   },
 
@@ -522,7 +516,7 @@ const database = {
     session.send(`发现 ${legacyCommands.length} 条命令记录`)
 
     if (overwrite) {
-      await ctx.database.remove('analytics.stat', { type: 'command' })
+      await ctx.database.remove('analytics.stat', { command: { $ne: null } })
     }
 
     const bindings = await ctx.database.get('binding', {})
@@ -546,7 +540,6 @@ const database = {
       }
 
       const query = {
-        type: 'command' as const,
         platform,
         guildId,
         userId: realUserId,
@@ -605,7 +598,6 @@ const database = {
    * @returns 清除的记录数量
    */
   async clearStats(ctx: Context, options: {
-    type?: 'command' | 'message'
     userId?: string
     platform?: string
     guildId?: string
@@ -631,7 +623,6 @@ export async function apply(ctx: Context, config: Config) {
 
   ctx.on('command/before-execute', ({session, command}) =>
     database.saveRecord(ctx, {
-      type: 'command',
       platform: session.platform,
       guildId: utils.getGuildId(session),
       userId: session.userId,
@@ -640,10 +631,10 @@ export async function apply(ctx: Context, config: Config) {
 
   ctx.on('message', (session) =>
     database.saveRecord(ctx, {
-      type: 'message',
       platform: session.platform,
       guildId: utils.getGuildId(session),
-      userId: session.userId
+      userId: session.userId,
+      command: null
     }))
 
   const stat = ctx.command('stat', '查看命令统计')
@@ -796,7 +787,6 @@ export async function apply(ctx: Context, config: Config) {
         }
 
         await database.clearStats(ctx, {
-          type,
           userId: options.user,
           platform: options.platform,
           guildId: options.guild,
