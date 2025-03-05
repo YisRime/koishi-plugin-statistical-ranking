@@ -317,15 +317,15 @@ const database = {
    */
   initialize(ctx: Context) {
     ctx.model.extend('analytics.stat', {
-      type: 'string',
       platform: 'string',
       channelId: 'string',
+      channelName: 'string',
       userId: 'string',
       userNickname: 'string',
+      type: 'string',
       command: 'string',
       count: 'unsigned',
       lastTime: 'timestamp',
-      channelName: 'string',
     }, {
       primary: ['type', 'platform', 'channelId', 'userId', 'command'],
     })
