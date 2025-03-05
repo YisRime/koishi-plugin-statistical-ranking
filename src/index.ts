@@ -303,7 +303,7 @@ const utils = {
    * @returns 唯一值数组
    */
   getUniqueKeys(records: StatRecord[], key: 'platform' | 'channelId' | 'userId' | 'command'): string[] {
-    return Array.from(new Set(records.map(r => r[key]))).filter(Boolean).sort()
+    return Array.from(new Set(records.map(r => r[key]))).filter(Boolean)
   }
 }
 
@@ -417,11 +417,11 @@ const database = {
   async importLegacyData(ctx: Context, session?: any, overwrite = false) {
     const hasLegacyTable = Object.keys(ctx.database.tables).includes('analytics.command')
     if (!hasLegacyTable) {
-      throw new Error('未找到历史数据')
+      throw new Error('未找到记录')
     }
 
     const legacyCommands = await ctx.database.get('analytics.command', {})
-    session.send(`发现 ${legacyCommands.length} 条历史命令记录`)
+    session.send(`发现 ${legacyCommands.length} 条命令记录`)
 
     if (overwrite) {
       await ctx.database.remove('analytics.stat', { type: 'command' })
@@ -549,7 +549,7 @@ export async function apply(ctx: Context, config: Config) {
     .action(async ({options}) => {
       const query = utils.buildQueryFromOptions({ ...options, type: 'command' })
       const records = await ctx.database.get('analytics.stat', query)
-      if (!records.length) return '未找到相关记录'
+      if (!records.length) return '未找到记录'
 
       const conditions = utils.formatConditions(options)
       const title = conditions.length
@@ -567,7 +567,7 @@ export async function apply(ctx: Context, config: Config) {
     .action(async ({session, options}) => {
       const query = utils.buildQueryFromOptions({ ...options, type: 'message' })
       const records = await ctx.database.get('analytics.stat', query)
-      if (!records.length) return '未找到相关记录'
+      if (!records.length) return '未找到记录'
 
       const conditions = utils.formatConditions(options)
       const title = conditions.length
@@ -582,14 +582,14 @@ export async function apply(ctx: Context, config: Config) {
         return `${name.padEnd(10, ' ')}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
       }
 
-      const lines = await utils.processStatRecords(records, 'userId', formatUserStat, 'key')
+      const lines = await utils.processStatRecords(records, 'userId', formatUserStat, 'count')
       return title + '\n\n' + lines.join('\n')
     })
 
-  stat.subcommand('.list', '查看统计列表')
+  stat.subcommand('.list', '查看类型列表', { authority: 3 })
     .action(async ({ session }) => {
       const records = await ctx.database.get('analytics.stat', {})
-      if (!records.length) return '未找到任何记录'
+      if (!records.length) return '未找到记录'
 
       const platforms = utils.getUniqueKeys(records, 'platform')
       const users = utils.getUniqueKeys(records, 'userId')
@@ -631,7 +631,7 @@ export async function apply(ctx: Context, config: Config) {
 
   if (config.enableClear) {
     stat.subcommand('.clear', '清除统计数据', { authority: 3 })
-      .option('type', '-t <type:string> 指定清除类型')
+      .option('type', '-t <type:string> 指定类型')
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
       .option('group', '-g [group:string] 指定群组')
@@ -652,13 +652,13 @@ export async function apply(ctx: Context, config: Config) {
 
         const conditions = utils.formatConditions(options)
         return conditions.length
-          ? `已删除${conditions.join('、')}的统计记录`
+          ? `已删除${conditions.join('、')} 的统计记录`
           : '已删除所有统计记录'
       })
   }
 
   if (config.enableImport) {
-    stat.subcommand('.import', '导入历史统计数据', { authority: 3 })
+    stat.subcommand('.import', '导入统计数据', { authority: 3 })
       .option('force', '-f 覆盖现有数据')
       .action(async ({ session, options }) => {
         try {
