@@ -1,9 +1,21 @@
 import { Context, Schema } from 'koishi'
 
+/**
+ * 插件名称及依赖配置
+ */
 export const name = 'statistical-ranking'
 export const inject = { required: ['database'] }
 
-// 配置定义
+/**
+ * 插件配置接口
+ * @interface Config
+ * @property {boolean} [enableImport] - 是否启用数据导入功能
+ * @property {boolean} [enableClear] - 是否启用数据清除功能
+ * @property {boolean} [enableBlacklist] - 是否启用黑名单功能
+ * @property {boolean} [enableWhitelist] - 是否启用白名单功能
+ * @property {string[]} [blacklist] - 黑名单列表
+ * @property {string[]} [whitelist] - 白名单列表
+ */
 export interface Config {
   enableImport?: boolean
   enableClear?: boolean
@@ -13,6 +25,10 @@ export interface Config {
   whitelist?: string[]
 }
 
+/**
+ * 插件配置模式
+ * 使用 Schema.intersect 组合多个配置块
+ */
 export const Config = Schema.intersect([
   Schema.object({
     enableImport: Schema.boolean().default(false).description('启用统计数据导入命令'),
@@ -50,7 +66,9 @@ export const Config = Schema.intersect([
   ]),
 ])
 
-// 类型定义
+/**
+ * Koishi 数据表声明
+ */
 declare module 'koishi' {
   interface Tables {
     'analytics.stat': StatRecord
@@ -59,22 +77,29 @@ declare module 'koishi' {
   }
 }
 
-/** 统计记录接口 */
+/**
+ * 统计记录数据结构
+ * @interface StatRecord
+ * @property {'command' | 'message'} type - 记录类型
+ * @property {string} platform - 平台标识
+ * @property {string} channelId - 频道ID
+ * @property {string} userId - 用户ID
+ * @property {string} [userNickname] - 用户昵称
+ * @property {string} [command] - 命令名称
+ * @property {number} count - 记录次数
+ * @property {Date} lastTime - 最后记录时间
+ * @property {string} [channelName] - 群组名称
+ */
 interface StatRecord {
-  /** 记录类型：命令或消息 */
   type: 'command' | 'message'
-  /** 平台标识 */
   platform: string
-  /** 频道ID */
   channelId: string
-  /** 用户ID */
   userId: string
-  /** 命令名称（仅命令类型有效） */
+  userNickname?: string
   command?: string
-  /** 记录次数 */
   count: number
-  /** 最后一次记录时间 */
   lastTime: Date
+  channelName?: string
 }
 
 interface LegacyCommandRecord {
@@ -94,14 +119,15 @@ interface BindingRecord {
   bid: number
 }
 
-// 工具函数
+// 工具函数集合
 const utils = {
   /**
    * 获取用户或群组名称
-   * @param session 会话对象
-   * @param id 目标ID
-   * @param type 目标类型：'user' 用户 或 'guild' 群组
+   * @param session - Koishi会话对象
+   * @param id - 目标ID
+   * @param type - 目标类型：'user'用户或'guild'群组
    * @returns 名称，获取失败则返回原ID
+   * @throws 不会抛出异常，失败时返回原ID
    */
   async getName(session: any, id: string, type: 'user' | 'guild'): Promise<string> {
     try {
@@ -280,7 +306,10 @@ const utils = {
   }
 }
 
-// 数据库操作
+/**
+ * 数据库操作工具集合
+ * 包含数据表初始化、记录保存、数据导入和清除等功能
+ */
 const database = {
   /**
    * 初始化数据库模型
@@ -292,9 +321,11 @@ const database = {
       platform: 'string',
       channelId: 'string',
       userId: 'string',
+      userNickname: 'string',
       command: 'string',
       count: 'unsigned',
       lastTime: 'timestamp',
+      channelName: 'string',
     }, {
       primary: ['type', 'platform', 'channelId', 'userId', 'command'],
     })
@@ -337,15 +368,36 @@ const database = {
     }
 
     try {
+      let userNickname = ''
+      let channelName = ''
+      try {
+        const bot = ctx.bots.find(bot => bot.platform === data.platform)
+        if (bot) {
+          // 获取用户昵称
+          const info = await bot.getGuildMember?.(data.channelId, data.userId)
+          userNickname = info?.nick || info?.name || ''
+
+          // 获取群组名称
+          const guild = await bot.getChannel?.(data.channelId)
+          channelName = guild?.name || ''
+        }
+      } catch (e) {
+        ctx.logger.warn('Failed to get user/channel info:', e)
+      }
+
       const existing = await ctx.database.get('analytics.stat', query)
       if (existing.length) {
         await ctx.database.set('analytics.stat', query, {
           count: existing[0].count + 1,
           lastTime: new Date(),
+          userNickname: userNickname || existing[0].userNickname,
+          channelName: channelName || existing[0].channelName,
         })
       } else {
         await ctx.database.create('analytics.stat', {
           ...query,
+          userNickname,
+          channelName,
           count: 1,
           lastTime: new Date(),
         })
@@ -463,9 +515,10 @@ const database = {
 }
 
 /**
- * 插件入口函数
- * @param ctx Koishi上下文
- * @param config 插件配置
+ * 插件主函数
+ * 初始化数据库、注册事件监听器和指令
+ * @param ctx - Koishi应用上下文
+ * @param config - 插件配置对象
  */
 export async function apply(ctx: Context, config: Config) {
   database.initialize(ctx)
@@ -504,6 +557,77 @@ export async function apply(ctx: Context, config: Config) {
 
       const lines = await utils.processStatRecords(records, 'command', null, 'key')
       return title + '\n\n' + lines.join('\n')
+    })
+
+  stat.subcommand('.user', '查看发言统计')
+    .option('user', '-u [user:string] 指定用户统计')
+    .option('group', '-g [group:string] 指定群组统计')
+    .option('platform', '-p [platform:string] 指定平台统计')
+    .action(async ({session, options}) => {
+      const query = utils.buildQueryFromOptions({ ...options, type: 'message' })
+      const records = await ctx.database.get('analytics.stat', query)
+      if (!records.length) return '未找到相关记录'
+
+      const conditions = utils.formatConditions(options)
+      const title = conditions.length
+        ? `${conditions.join(' ')} 发言统计 ——`
+        : '全局发言统计 ——'
+
+      const formatUserStat = async (userId: string, record: StatRecord) => {
+        const name = record.userNickname || await utils.getName(session, userId, 'user')
+        let groupInfo = ''
+        if (record.channelId) {
+          const groupName = record.channelName || await utils.getName(session, record.channelId, 'guild')
+          groupInfo = ` (${groupName})`
+        }
+        return `${name.padEnd(10, ' ')}${record.count.toString().padStart(5)}条${groupInfo} ${utils.formatTimeAgo(record.lastTime)}`
+      }
+
+      const lines = await utils.processStatRecords(records, 'userId', formatUserStat, 'count')
+      return title + '\n\n' + lines.join('\n')
+    })
+
+  stat.subcommand('.list', '查看统计列表')
+    .action(async ({ session }) => {
+      const records = await ctx.database.get('analytics.stat', {})
+      if (!records.length) return '未找到任何记录'
+
+      const platforms = utils.getUniqueKeys(records, 'platform')
+      const users = utils.getUniqueKeys(records, 'userId')
+      const groups = utils.getUniqueKeys(records, 'channelId')
+      const commands = utils.getUniqueKeys(records, 'command')
+
+      const parts = []
+
+      if (platforms.length) {
+        parts.push(`平台列表：\n${platforms.join(',')}`)
+      }
+
+      if (users.length) {
+        const names = await Promise.all(users.map(id => utils.getName(session, id, 'user')))
+        parts.push(`用户列表：\n${names.map((name, i) => `${name} (${users[i]})`).join(',')}`)
+      }
+
+      if (groups.length) {
+        const groupInfos = records.reduce((map, record) => {
+          if (record.channelId && record.channelName) {
+            map.set(record.channelId, record.channelName)
+          }
+          return map
+        }, new Map<string, string>())
+
+        const names = await Promise.all(groups.map(async id => {
+          const savedName = groupInfos.get(id)
+          return savedName || await utils.getName(session, id, 'guild')
+        }))
+        parts.push(`群组列表：\n${names.map((name, i) => `${name} (${groups[i]})`).join(',')}`)
+      }
+
+      if (commands.length) {
+        parts.push(`命令列表：\n${commands.join(',')}`)
+      }
+
+      return parts.join('\n')
     })
 
   if (config.enableClear) {
@@ -546,60 +670,4 @@ export async function apply(ctx: Context, config: Config) {
         }
       })
   }
-
-  stat.subcommand('.user', '查看发言统计')
-    .option('user', '-u [user:string] 指定用户统计')
-    .option('group', '-g [group:string] 指定群组统计')
-    .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({session, options}) => {
-      const query = utils.buildQueryFromOptions({ ...options, type: 'message' })
-      const records = await ctx.database.get('analytics.stat', query)
-      if (!records.length) return '未找到相关记录'
-
-      const conditions = utils.formatConditions(options)
-      const title = conditions.length
-        ? `${conditions.join(' ')} 发言统计 ——`
-        : '全局发言统计 ——'
-
-      const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
-        const name = await utils.getName(session, userId, 'user')
-        return `${name.padEnd(10, ' ')}${data.count.toString().padStart(5)}条 ${utils.formatTimeAgo(data.lastTime)}`
-      }
-
-      const lines = await utils.processStatRecords(records, 'userId', formatUserStat, 'count')
-      return title + '\n\n' + lines.join('\n')
-    })
-
-  stat.subcommand('.list', '查看统计列表')
-    .action(async ({ session }) => {
-      const records = await ctx.database.get('analytics.stat', {})
-      if (!records.length) return '未找到任何记录'
-
-      const platforms = utils.getUniqueKeys(records, 'platform')
-      const users = utils.getUniqueKeys(records, 'userId')
-      const groups = utils.getUniqueKeys(records, 'channelId')
-      const commands = utils.getUniqueKeys(records, 'command')
-
-      const parts = []
-
-      if (platforms.length) {
-        parts.push(`平台列表：\n${platforms.join(',')}`)
-      }
-
-      if (users.length) {
-        const names = await Promise.all(users.map(id => utils.getName(session, id, 'user')))
-        parts.push(`用户列表：\n${names.map((name, i) => `${name} (${users[i]})`).join(',')}`)
-      }
-
-      if (groups.length) {
-        const names = await Promise.all(groups.map(id => utils.getName(session, id, 'guild')))
-        parts.push(`群组列表：\n${names.map((name, i) => `${name} (${groups[i]})`).join(',')}`)
-      }
-
-      if (commands.length) {
-        parts.push(`命令列表：\n${commands.join(',')}`)
-      }
-
-      return parts.join('\n')
-    })
 }
