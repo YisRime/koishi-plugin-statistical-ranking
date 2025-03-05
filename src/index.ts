@@ -574,11 +574,32 @@ export async function apply(ctx: Context, config: Config) {
         ? `${conditions.join(' ')} 发言统计 ——`
         : '全局发言统计 ——'
 
-      const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
-        const record = records.find(r => r.userId === userId)
-        if (!record) return `${userId.padEnd(10, ' ')}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
+      // 创建用户ID到昵称的映射
+      const nicknameMap = new Map<string, string>()
+      for (const record of records) {
+        if (record.userNickname) {
+          nicknameMap.set(record.userId, record.userNickname)
+        }
+      }
 
-        const name = record.userNickname || await utils.getName(session, userId, 'user')
+      // 需要获取昵称的用户ID列表
+      const needNameIds = Array.from(new Set(
+        records.filter(r => !nicknameMap.has(r.userId))
+          .map(r => r.userId)
+      ))
+
+      // 批量获取昵称
+      if (needNameIds.length > 0) {
+        const names = await Promise.all(
+          needNameIds.map(id => utils.getName(session, id, 'user'))
+        )
+        needNameIds.forEach((id, index) => {
+          nicknameMap.set(id, names[index])
+        })
+      }
+
+      const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
+        const name = nicknameMap.get(userId) || userId
         return `${name.padEnd(10, ' ')}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
       }
 
