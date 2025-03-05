@@ -515,18 +515,23 @@ const database = {
       const updateData = {
         count: (existing?.count || 0) + 1,
         lastTime: new Date(),
-        userNickname: userInfo?.nick || userInfo?.name || existing?.userNickname || '',
+        userNickname: userInfo?.nickname || userInfo?.name || existing?.userNickname || '',
         guildName: guildInfo?.name || existing?.guildName || '',
       }
 
       if (existing) {
         await ctx.database.set('analytics.stat', query, updateData)
       } else {
-        await ctx.database.create('analytics.stat', {
-          ...query,
-          ...updateData,
-          count: 1,
-        })
+        const checkExisting = await ctx.database.get('analytics.stat', query)
+        if (!checkExisting.length) {
+          await ctx.database.create('analytics.stat', {
+            ...query,
+            ...updateData,
+            count: 1,
+          })
+        } else {
+          await ctx.database.set('analytics.stat', query, updateData)
+        }
       }
     } catch (e) {
       ctx.logger.error('Failed to save stat record:', e, query)
@@ -549,7 +554,7 @@ const database = {
     session?.send(`发现 ${legacyCommands.length} 条命令记录`)
 
     if (overwrite) {
-      await ctx.database.remove('analytics.stat', { command: { $ne: null } })
+      await ctx.database.remove('analytics.stat', {})
     }
 
     const bindings = await ctx.database.get('binding', {})
@@ -631,26 +636,19 @@ const database = {
             command: record.command,
           }
 
-          if (!overwrite) {
-            const [existing] = await ctx.database.get('analytics.stat', query)
-            if (existing) {
-              await ctx.database.set('analytics.stat', query, {
-                count: existing.count + record.count,
-                lastTime: new Date(Math.max(
-                  existing.lastTime.getTime(),
-                  record.lastTime.getTime()
-                ))
-              })
-              importedCount++
-              return
-            }
+          const [existing] = await ctx.database.get('analytics.stat', query)
+          if (existing) {
+            await ctx.database.set('analytics.stat', query, {
+              count: existing.count + record.count,
+              lastTime: record.lastTime
+            })
+          } else {
+            await ctx.database.create('analytics.stat', {
+              ...query,
+              count: record.count,
+              lastTime: record.lastTime,
+            })
           }
-
-          await ctx.database.create('analytics.stat', {
-            ...query,
-            count: record.count,
-            lastTime: record.lastTime,
-          })
           importedCount++
         } catch (e) {
           errorCount++
@@ -676,6 +674,12 @@ const database = {
     guildId?: string
     command?: string
   }) {
+
+    if (!Object.values(options).some(Boolean)) {
+      await ctx.database.drop('analytics.stat')
+      return -1
+    }
+
     const query: any = {}
     for (const [key, value] of Object.entries(options)) {
       if (value) query[key] = value
@@ -876,12 +880,17 @@ export async function apply(ctx: Context, config: Config) {
       .option('guild', '-g [guild:string] 指定群组')
       .option('command', '-c [command:string] 指定命令')
       .action(async ({ options }) => {
-        await database.clearStats(ctx, {
+        const result = await database.clearStats(ctx, {
           userId: options.user,
           platform: options.platform,
           guildId: options.guild,
           command: options.command
         })
+
+        // 如果返回-1表示删除了整个表
+        if (result === -1) {
+          return '已删除所有统计记录并重置统计表'
+        }
 
         const conditions = utils.formatConditions(options)
         return conditions.length
