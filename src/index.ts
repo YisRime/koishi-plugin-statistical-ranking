@@ -1,7 +1,13 @@
 import { Context, Schema } from 'koishi'
 
 /**
+ * @packageDocumentation
+ * 统计与排名插件 - 用于统计和分析用户命令使用情况与活跃度
+ */
+
+/**
  * 插件名称及依赖配置
+ * @public
  */
 export const name = 'statistical-ranking'
 export const inject = { required: ['database'] }
@@ -25,12 +31,9 @@ export interface Config {
   whitelist?: string[]
 }
 
-// 新增类型定义
-type StatType = 'command' | 'message'
 type NameType = 'user' | 'guild'
 
 interface QueryOptions {
-  type?: StatType
   user?: string
   guild?: string
   platform?: string
@@ -108,7 +111,6 @@ declare module 'koishi' {
  * @property {string} [guildName] - 群组名称
  */
 interface StatRecord {
-  id?: number
   platform: string
   guildId: string
   userId: string
@@ -136,9 +138,10 @@ interface BindingRecord {
   bid: number
 }
 
-// 重构工具函数
 /**
+ * @internal
  * 统计数据聚合管理器
+ * 用于处理和聚合统计数据，支持自定义键格式化
  */
 class StatMap {
   private data = new Map<string, { count: number, lastTime: Date }>()
@@ -173,9 +176,15 @@ class StatMap {
   }
 }
 
+/**
+ * @internal
+ * 工具函数集合对象
+ */
 const utils = {
   /**
    * 统一处理异步获取名称的错误
+   * @param fn - 异步函数，用于获取名称
+   * @returns 获取到的名称或null
    */
   async safeGetName(fn: () => Promise<any>): Promise<string | null> {
     try {
@@ -186,11 +195,22 @@ const utils = {
     }
   },
 
+  /**
+   * @private
+   * 名称获取队列相关变量
+   */
   _nameQueue: new Map<string, Promise<string>>(),
   _queueCount: 0,
   _batchSize: 10,
   _batchDelay: 100,
 
+  /**
+   * 批量获取用户或群组名称
+   * @param session - Koishi会话对象
+   * @param id - 用户或群组ID
+   * @param type - 类型：'user' 或 'guild'
+   * @returns Promise<string> 名称或ID
+   */
   async getName(session: any, id: string, type: NameType): Promise<string> {
     const cacheKey = `${type}:${id}`
 
@@ -262,10 +282,11 @@ const utils = {
 
   /**
    * 验证和规范化查询选项
+   * @param options - 查询选项对象
+   * @returns 标准化后的查询选项
    */
   normalizeQueryOptions(options: QueryOptions): Required<QueryOptions> {
     return {
-      type: options.type || 'command',
       user: options.user || '',
       guild: options.guild || '',
       platform: options.platform || '',
@@ -273,13 +294,17 @@ const utils = {
     }
   },
 
+  /**
+   * 格式化查询条件为可读文本
+   * @param options - 查询选项
+   * @returns 格式化后的条件数组
+   */
   formatConditions(options: QueryOptions): string[] {
     const normalized = utils.normalizeQueryOptions(options)
     return Object.entries(normalized)
       .filter(([_, value]) => value)
       .map(([key, value]) => {
         switch(key) {
-          case 'type': return ''
           case 'user': return `用户 ${value}`
           case 'guild': return `群组 ${value}`
           case 'platform': return `平台 ${value}`
@@ -297,14 +322,12 @@ const utils = {
    */
   buildQueryFromOptions(options: QueryOptions) {
     const normalized = utils.normalizeQueryOptions(options)
-    const query: Record<string, any> = {
-      command: normalized.type === 'message' ? null : undefined
-    }
+    const query: Record<string, any> = {}
 
     if (normalized.user) query.userId = normalized.user
     if (normalized.guild) query.guildId = normalized.guild
     if (normalized.platform) query.platform = normalized.platform
-    if (normalized.type === 'command' && normalized.command) query.command = normalized.command
+    if (normalized.command) query.command = normalized.command
 
     return query
   },
@@ -397,10 +420,17 @@ const utils = {
   },
 }
 
+/**
+ * @internal
+ * 数据库操作相关函数集合
+ */
 const database = {
+  /**
+   * 初始化数据库表结构
+   * @param ctx - Koishi上下文
+   */
   initialize(ctx: Context) {
     ctx.model.extend('analytics.stat', {
-      id: 'unsigned',
       platform: 'string',
       guildId: 'string',
       userId: 'string',
@@ -410,9 +440,7 @@ const database = {
       count: 'unsigned',
       lastTime: 'timestamp',
     }, {
-      autoInc: true,
-      primary: 'id',
-      unique: [['platform', 'guildId', 'userId', 'command']],
+      primary: ['platform', 'guildId', 'userId', 'command'],
     })
   },
 
@@ -442,6 +470,12 @@ const database = {
     await database.upsertRecord(ctx, data)
   },
 
+  /**
+   * 检查操作权限
+   * @param config - 插件配置
+   * @param target - 目标对象
+   * @returns 是否有权限
+   */
   async checkPermissions(config: Config, target: Target): Promise<boolean> {
     if (config?.enableBlacklist && config?.blacklist?.length) {
       if (utils.matchRuleList(config.blacklist, target)) {
@@ -464,7 +498,6 @@ const database = {
       command: data.command ?? null,
     }
 
-    // 验证必要字段
     if (!query.platform || !query.guildId || !query.userId) {
       ctx.logger.warn('Missing required fields:', query)
       return
@@ -513,82 +546,122 @@ const database = {
     }
 
     const legacyCommands = await ctx.database.get('analytics.command', {})
-    session.send(`发现 ${legacyCommands.length} 条命令记录`)
+    session?.send(`发现 ${legacyCommands.length} 条命令记录`)
 
     if (overwrite) {
       await ctx.database.remove('analytics.stat', { command: { $ne: null } })
     }
 
     const bindings = await ctx.database.get('binding', {})
-    const userIdMap = new Map<string, string>()
+    const userIdMap = new Map<string, { pid: string; platform: string }>()
     for (const binding of bindings) {
-      const key = `${binding.platform}:${binding.aid}`
-      if (binding.pid) userIdMap.set(key, binding.pid)
+      if (!binding.pid) continue
+      const key = `${binding.aid}`
+      userIdMap.set(key, {
+        pid: binding.pid,
+        platform: binding.platform
+      })
     }
 
+    const batchSize = 100
     let importedCount = 0
+    let errorCount = 0
+
+    const processedRecords = new Map<string, {
+      platform: string
+      guildId: string
+      userId: string
+      command: string
+      count: number
+      lastTime: Date
+    }>()
+
     for (const cmd of legacyCommands) {
-      const platform = cmd.platform || ''
-      const key = `${platform}:${cmd.userId}`
-      const realUserId = userIdMap.get(key) || cmd.userId
-      const command = cmd.name || ''
-      const guildId = cmd.channelId || 'private'
-
-      if (!platform || !realUserId) {
-        ctx.logger.warn('Skipping invalid record:', cmd)
-        continue
-      }
-
-      const query = {
-        platform,
-        guildId,
-        userId: realUserId,
-        command,
-      }
-
       try {
-        if (!overwrite) {
-          const existing = await ctx.database.get('analytics.stat', query)
-          if (existing.length) {
-            const timestamp = cmd.date * 86400000 + cmd.hour * 3600000
-            const validTime = new Date(timestamp)
-            const now = Date.now()
-            const importTime = isNaN(validTime.getTime()) || validTime.getTime() > now
-              ? new Date()
-              : validTime
+        const binding = userIdMap.get(cmd.userId)
+        const platform = binding?.platform || cmd.platform || 'unknown'
+        const userId = binding?.pid || cmd.userId
+        const command = cmd.name || ''
+        const guildId = cmd.channelId || 'private'
 
-            await ctx.database.set('analytics.stat', query, {
-              count: existing[0].count + (cmd.count || 1),
-              lastTime: new Date(Math.max(
-                existing[0].lastTime.getTime(),
-                importTime.getTime()
-              ))
-            })
-            importedCount++
-            continue
-          }
+        if (!userId) {
+          ctx.logger.warn('Invalid user ID:', cmd)
+          continue
         }
 
+        const key = `${platform}:${guildId}:${userId}:${command}`
+        const existing = processedRecords.get(key)
         const timestamp = cmd.date * 86400000 + cmd.hour * 3600000
-        const validTime = new Date(timestamp)
-        const now = Date.now()
-        const lastTime = isNaN(validTime.getTime()) || validTime.getTime() > now
+        const cmdTime = new Date(timestamp)
+        const lastTime = isNaN(cmdTime.getTime()) || cmdTime.getTime() > Date.now()
           ? new Date()
-          : validTime
+          : cmdTime
 
-        await ctx.database.create('analytics.stat', {
-          ...query,
-          count: cmd.count || 1,
-          lastTime
-        })
-        importedCount++
+        if (existing) {
+          existing.count += (cmd.count || 1)
+          if (lastTime > existing.lastTime) {
+            existing.lastTime = lastTime
+          }
+        } else {
+          processedRecords.set(key, {
+            platform,
+            guildId,
+            userId,
+            command,
+            count: cmd.count || 1,
+            lastTime
+          })
+        }
       } catch (e) {
-        ctx.logger.error('Failed to import record:', e, query)
+        errorCount++
+        ctx.logger.error('Failed to process record:', e, cmd)
       }
-
     }
 
-    return `导入完成，成功导入 ${importedCount} 条记录`
+    const records = Array.from(processedRecords.values())
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize)
+
+      await Promise.all(batch.map(async (record) => {
+        try {
+          const query = {
+            platform: record.platform,
+            guildId: record.guildId,
+            userId: record.userId,
+            command: record.command,
+          }
+
+          if (!overwrite) {
+            const [existing] = await ctx.database.get('analytics.stat', query)
+            if (existing) {
+              await ctx.database.set('analytics.stat', query, {
+                count: existing.count + record.count,
+                lastTime: new Date(Math.max(
+                  existing.lastTime.getTime(),
+                  record.lastTime.getTime()
+                ))
+              })
+              importedCount++
+              return
+            }
+          }
+
+          await ctx.database.create('analytics.stat', {
+            ...query,
+            count: record.count,
+            lastTime: record.lastTime,
+          })
+          importedCount++
+        } catch (e) {
+          errorCount++
+          ctx.logger.error('Failed to import record:', e, record)
+        }
+      }))
+    }
+
+    return `导入完成，成功导入 ${importedCount} 条记录${
+      errorCount ? `，失败 ${errorCount} 条` : ''
+    }`
   },
 
   /**
@@ -614,7 +687,13 @@ const database = {
 
 /**
  * 插件主函数
- * 初始化数据库、注册事件监听器和指令
+ * @public
+ *
+ * 初始化插件功能：
+ * - 设置数据库结构
+ * - 注册事件监听器
+ * - 注册指令
+ *
  * @param ctx - Koishi应用上下文
  * @param config - 插件配置对象
  */
@@ -643,11 +722,21 @@ export async function apply(ctx: Context, config: Config) {
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .action(async ({options}) => {
-      const query = utils.buildQueryFromOptions({ ...options, type: 'command' })
+      const baseQuery = utils.buildQueryFromOptions({
+        user: options.user,
+        guild: options.guild,
+        platform: options.platform
+      })
+
+      const query = {
+        ...baseQuery,
+        command: options.command ? options.command : { $not: null }
+      }
+
       const records = await ctx.database.get('analytics.stat', query)
       if (!records?.length) return '未找到记录'
 
-      const conditions = utils.formatConditions({ ...options, type: 'command' })
+      const conditions = utils.formatConditions(options)
       const title = conditions.length
         ? `${conditions.join('、')}的命令统计 ——`
         : '全局命令统计 ——'
@@ -661,11 +750,13 @@ export async function apply(ctx: Context, config: Config) {
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .action(async ({session, options}) => {
-      const query = utils.buildQueryFromOptions({ ...options, type: 'message' })
+      const query = utils.buildQueryFromOptions(options)
+      query.command = null
+
       const records = await ctx.database.get('analytics.stat', query)
       if (!records?.length) return '未找到记录'
 
-      const conditions = utils.formatConditions({ ...options, type: 'message' })
+      const conditions = utils.formatConditions({ ...options })
       const title = conditions.length
         ? `${conditions.join('、')}的发言统计 ——`
         : '全局发言统计 ——'
@@ -735,8 +826,13 @@ export async function apply(ctx: Context, config: Config) {
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .action(async ({session, options}) => {
-      const type = options.command ? 'command' : 'message'
-      const query = utils.buildQueryFromOptions({ ...options, type })
+      const query = utils.buildQueryFromOptions({
+        user: options.user,
+        guild: options.guild,
+        platform: options.platform,
+        command: options.command
+      })
+
       const records = await ctx.database.get('analytics.stat', query)
       if (!records.length) return '未找到记录'
 
@@ -775,17 +871,11 @@ export async function apply(ctx: Context, config: Config) {
 
   if (config.enableClear) {
     stat.subcommand('.clear', '清除统计数据', { authority: 3 })
-      .option('type', '-t <type:string> 指定类型')
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
       .option('guild', '-g [guild:string] 指定群组')
       .option('command', '-c [command:string] 指定命令')
       .action(async ({ options }) => {
-        const type = options.type as 'command' | 'message'
-        if (type && !['command', 'message'].includes(type)) {
-          return '无效类型'
-        }
-
         await database.clearStats(ctx, {
           userId: options.user,
           platform: options.platform,
@@ -793,10 +883,7 @@ export async function apply(ctx: Context, config: Config) {
           command: options.command
         })
 
-        const conditions = utils.formatConditions({
-          ...options,
-          type: options.type as StatType
-        })
+        const conditions = utils.formatConditions(options)
         return conditions.length
           ? `已删除${conditions.join('、')}的统计记录`
           : '已删除所有统计记录'
