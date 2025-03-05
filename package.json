@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-statistical-ranking",
   "description": "统计成员发言和命令使用并可排行展示",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "contributors": [
     "Yis_Rime <yis_rime@outlook.com>"
   ],

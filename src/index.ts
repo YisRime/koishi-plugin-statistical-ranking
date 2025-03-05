@@ -5,12 +5,50 @@ export const inject = { required: ['database'] }
 
 // 配置定义
 export interface Config {
-  enableLegacyImport?: boolean
+  enableImport?: boolean
+  enableClear?: boolean
+  enableBlacklist?: boolean
+  enableWhitelist?: boolean
+  blacklist?: string[]
+  whitelist?: string[]
 }
 
-export const Config: Schema<Config> = Schema.object({
-  enableLegacyImport: Schema.boolean().default(false).description('启用统计数据导入')
-})
+export const Config = Schema.intersect([
+  Schema.object({
+    enableImport: Schema.boolean().default(false).description('启用统计数据导入命令'),
+    enableClear: Schema.boolean().default(false).description('启用统计数据清除命令'),
+    enableBlacklist: Schema.boolean().default(false).description('启用黑名单'),
+    enableWhitelist: Schema.boolean().default(false).description('启用白名单'),
+  }).description('基础配置'),
+  Schema.union([
+    Schema.object({
+      enableBlacklist: Schema.const(true).required(),
+      blacklist: Schema.array(Schema.string())
+        .description('黑名单列表')
+        .default([
+          'onebot:12345:67890',
+          'qq::12345',
+          'sandbox::',
+          '.help',
+        ]),
+    }),
+    Schema.object({}),
+  ]),
+  Schema.union([
+    Schema.object({
+      enableWhitelist: Schema.const(true).required(),
+      whitelist: Schema.array(Schema.string())
+        .description('白名单列表')
+        .default([
+          'onebot:12345:67890',
+          'qq::12345',
+          'telegram::',
+          '.help',
+        ]),
+    }),
+    Schema.object({}),
+  ]),
+])
 
 // 类型定义
 declare module 'koishi' {
@@ -119,7 +157,7 @@ const utils = {
       }
     }
 
-    return parts.length ? parts.join(' ') + '前' : '一会前'
+    return parts.length ? parts + '前' : '一会前'
   },
 
   /**
@@ -168,12 +206,14 @@ const utils = {
    * @param records 统计记录数组
    * @param aggregateKey 聚合键名
    * @param formatFn 可选的格式化函数
+   * @param sortBy 排序方式：'count' 按次数或 'key' 按键名
    * @returns 格式化后的结果数组
    */
   async processStatRecords(
     records: StatRecord[],
     aggregateKey: string,
-    formatFn?: (key: string, data: { count: number, lastTime: Date }) => Promise<string>
+    formatFn?: (key: string, data: { count: number, lastTime: Date }) => Promise<string>,
+    sortBy: 'count' | 'key' = 'count'
   ) {
     const stats = records.reduce((map, record) => {
       const key = aggregateKey === 'command' ? record.command?.split('.')[0] || '' : record[aggregateKey]
@@ -185,14 +225,58 @@ const utils = {
     }, new Map())
 
     const sortedEntries = Array.from(stats.entries())
-      .sort((a, b) => b[1].count - a[1].count)
+      .sort((a, b) => sortBy === 'count'
+        ? b[1].count - a[1].count
+        : a[0].localeCompare(b[0]))
 
     if (formatFn) {
       return Promise.all(sortedEntries.map(([key, data]) => formatFn(key, data)))
     }
 
     return sortedEntries.map(([key, {count, lastTime}]) =>
-      `${key.padEnd(12, ' ')}${count.toString().padStart(6, ' ')} 次  ${utils.formatTimeAgo(lastTime).padEnd(20, ' ')}`)
+      `${key.padEnd(10, ' ')}${count.toString().padStart(5)}次 ${utils.formatTimeAgo(lastTime)}`)
+  },
+
+  /**
+   * 检查目标是否匹配规则
+   * @param rule 规则字符串 platform:group:user
+   * @param target 目标对象
+   * @returns 是否匹配
+   */
+  matchRule(rule: string, target: { platform: string, channelId: string, userId: string }): boolean {
+    const parts = rule.split(':')
+    const [rulePlatform = '', ruleGroup = '', ruleUser = ''] = parts
+
+    // 优先检查用户
+    if (ruleUser && target.userId === ruleUser) return true
+
+    // 检查群组
+    if (ruleGroup && target.channelId === ruleGroup) return true
+
+    // 最后检查平台
+    if (rulePlatform && target.platform === rulePlatform) return true
+
+    return false
+  },
+
+  /**
+   * 检查目标是否在列表中匹配
+   * @param list 规则列表
+   * @param target 目标对象
+   * @returns 是否匹配
+   */
+  matchRuleList(list: string[], target: { platform: string, channelId: string, userId: string }): boolean {
+    return list.some(rule => utils.matchRule(rule, target))
+  },
+
+  /**
+   * 获取统计数据中的唯一键列表
+   * @param records 统计记录数组
+   * @param key 要提取的键名
+   * @returns 唯一值数组
+   */
+  getUniqueKeys(records: StatRecord[], key: 'platform' | 'channelId' | 'userId' | 'command'): string[] {
+    return Array.from(new Set(records.map(r => r[key]))).filter(Boolean).sort()
   }
 }
 
@@ -224,6 +308,23 @@ const database = {
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
     if (!data.type || !data.platform || !data.channelId || !data.userId) {
       ctx.logger.warn('saveRecord: missing required fields', data)
+      return
+    }
+
+    const config = ctx.config.statistical_ranking || {}
+    const target = {
+      platform: data.platform,
+      channelId: data.channelId,
+      userId: data.userId
+    }
+
+    // 检查黑名单
+    if (config?.enableBlacklist && config?.blacklist?.length && utils.matchRuleList(config.blacklist, target)) {
+      return
+    }
+
+    // 检查白名单
+    if (config?.enableWhitelist && config?.whitelist?.length && !utils.matchRuleList(config.whitelist, target)) {
       return
     }
 
@@ -401,38 +502,40 @@ export async function apply(ctx: Context, config: Config) {
         ? `${conditions.join(' ')} 命令统计 ——`
         : '全局命令统计 ——'
 
-      const lines = await utils.processStatRecords(records, 'command')
+      const lines = await utils.processStatRecords(records, 'command', null, 'key')
       return title + '\n\n' + lines.join('\n')
     })
 
-  stat.subcommand('.clear', '清除统计数据')
-    .option('type', '-t <type:string> 指定清除类型', { authority: 3 })
-    .option('user', '-u [user:string] 指定用户')
-    .option('platform', '-p [platform:string] 指定平台')
-    .option('group', '-g [group:string] 指定群组')
-    .option('command', '-c [command:string] 指定命令')
-    .action(async ({ options }) => {
-      const type = options.type as 'command' | 'message'
-      if (type && !['command', 'message'].includes(type)) {
-        return '无效类型'
-      }
+  if (config.enableClear) {
+    stat.subcommand('.clear', '清除统计数据', { authority: 3 })
+      .option('type', '-t <type:string> 指定清除类型')
+      .option('user', '-u [user:string] 指定用户')
+      .option('platform', '-p [platform:string] 指定平台')
+      .option('group', '-g [group:string] 指定群组')
+      .option('command', '-c [command:string] 指定命令')
+      .action(async ({ options }) => {
+        const type = options.type as 'command' | 'message'
+        if (type && !['command', 'message'].includes(type)) {
+          return '无效类型'
+        }
 
-      await database.clearStats(ctx, {
-        type,
-        userId: options.user,
-        platform: options.platform,
-        channelId: options.group,
-        command: options.command
+        await database.clearStats(ctx, {
+          type,
+          userId: options.user,
+          platform: options.platform,
+          channelId: options.group,
+          command: options.command
+        })
+
+        const conditions = utils.formatConditions(options)
+        return conditions.length
+          ? `已删除${conditions.join('、')}的统计记录`
+          : '已删除所有统计记录'
       })
+  }
 
-      const conditions = utils.formatConditions(options)
-      return conditions.length
-        ? `已删除${conditions.join('、')}的统计记录`
-        : '已删除所有统计记录'
-    })
-
-  if (config.enableLegacyImport) {
-    stat.subcommand('.import', '导入历史统计数据')
+  if (config.enableImport) {
+    stat.subcommand('.import', '导入历史统计数据', { authority: 3 })
       .option('force', '-f 覆盖现有数据')
       .action(async ({ session, options }) => {
         try {
@@ -460,10 +563,43 @@ export async function apply(ctx: Context, config: Config) {
 
       const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
         const name = await utils.getName(session, userId, 'user')
-        return `${name}: ${data.count}条（${utils.formatTimeAgo(data.lastTime)}）`
+        return `${name.padEnd(10, ' ')}${data.count.toString().padStart(5)}条 ${utils.formatTimeAgo(data.lastTime)}`
       }
 
-      const lines = await utils.processStatRecords(records, 'userId', formatUserStat)
-      return title + '\n' + lines.join('\n')
+      const lines = await utils.processStatRecords(records, 'userId', formatUserStat, 'count')
+      return title + '\n\n' + lines.join('\n')
+    })
+
+  stat.subcommand('.list', '查看统计列表')
+    .action(async ({ session }) => {
+      const records = await ctx.database.get('analytics.stat', {})
+      if (!records.length) return '未找到任何记录'
+
+      const platforms = utils.getUniqueKeys(records, 'platform')
+      const users = utils.getUniqueKeys(records, 'userId')
+      const groups = utils.getUniqueKeys(records, 'channelId')
+      const commands = utils.getUniqueKeys(records, 'command')
+
+      const parts = []
+
+      if (platforms.length) {
+        parts.push(`平台列表：\n${platforms.join(',')}`)
+      }
+
+      if (users.length) {
+        const names = await Promise.all(users.map(id => utils.getName(session, id, 'user')))
+        parts.push(`用户列表：\n${names.map((name, i) => `${name} (${users[i]})`).join(',')}`)
+      }
+
+      if (groups.length) {
+        const names = await Promise.all(groups.map(id => utils.getName(session, id, 'guild')))
+        parts.push(`群组列表：\n${names.map((name, i) => `${name} (${groups[i]})`).join(',')}`)
+      }
+
+      if (commands.length) {
+        parts.push(`命令列表：\n${commands.join(',')}`)
+      }
+
+      return parts.join('\n')
     })
 }
