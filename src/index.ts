@@ -152,7 +152,7 @@ const utils = {
    */
   formatTimeAgo(date: Date): string {
     if (isNaN(date.getTime())) {
-      return '未知时间'
+      return '未知时间'.padStart(9)
     }
 
     const now = Date.now()
@@ -161,7 +161,7 @@ const utils = {
     }
 
     const diff = Math.max(0, now - date.getTime())
-    if (diff < 300000) return '一会前'
+    if (diff < 300000) return '一会前'.padStart(9)
 
     const units = [
       { div: 31536000000, unit: '年' },
@@ -177,13 +177,14 @@ const utils = {
     for (const { div, unit } of units) {
       const val = Math.floor(remaining / div)
       if (val > 0) {
-        parts.push(`${val} ${unit}`)
+        parts.push(`${val}${unit}`)
         remaining %= div
         if (parts.length === 2) break
       }
     }
 
-    return parts.length ? parts + '前' : '一会前'
+    const timeText = parts.length ? parts.join('') + '前' : '一会前'
+    return timeText.padStart(9)
   },
 
   /**
@@ -573,17 +574,15 @@ export async function apply(ctx: Context, config: Config) {
         ? `${conditions.join(' ')} 发言统计 ——`
         : '全局发言统计 ——'
 
-      const formatUserStat = async (userId: string, record: StatRecord) => {
+      const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
+        const record = records.find(r => r.userId === userId)
+        if (!record) return `${userId.padEnd(10, ' ')}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
+
         const name = record.userNickname || await utils.getName(session, userId, 'user')
-        let groupInfo = ''
-        if (record.channelId) {
-          const groupName = record.channelName || await utils.getName(session, record.channelId, 'guild')
-          groupInfo = ` (${groupName})`
-        }
-        return `${name.padEnd(10, ' ')}${record.count.toString().padStart(5)}条${groupInfo} ${utils.formatTimeAgo(record.lastTime)}`
+        return `${name.padEnd(10, ' ')}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
       }
 
-      const lines = await utils.processStatRecords(records, 'userId', formatUserStat, 'count')
+      const lines = await utils.processStatRecords(records, 'userId', formatUserStat, 'key')
       return title + '\n\n' + lines.join('\n')
     })
 

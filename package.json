@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-statistical-ranking",
-  "description": "统计成员发言和命令使用并可排行展示",
-  "version": "1.0.3",
+  "description": "统计群组内的命令使用和成员发言数据,支持黑白名单过滤,支持按用户/群组/平台筛选展示",
+  "version": "1.0.4",
   "contributors": [
     "Yis_Rime <yis_rime@outlook.com>"
   ],
@@ -21,7 +21,17 @@
   "keywords": [
     "chatbot",
     "koishi",
-    "plugin"
+    "plugin",
+    "stat",
+    "statistics",
+    "ranking",
+    "command",
+    "message",
+    "group",
+    "user",
+    "platform",
+    "blacklist",
+    "whitelist"
   ],
   "devDependencies": {},
   "peerDependencies": {
