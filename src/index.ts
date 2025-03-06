@@ -163,37 +163,14 @@ export async function apply(ctx: Context, config: Config) {
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
   ctx.on('message', (session) => handleRecord(session, null))
 
-  const handleStatQuery = async (options: any, type: 'command' | 'user' | 'guild') => {
-    const query = utils.buildQueryFromOptions(options)
-    if (type === 'user') query.command = null
-    if (type === 'command') query.command = options.command || { $not: null }
-
-    const records = await ctx.database.get('analytics.stat', query)
-    if (!records?.length) return '未找到记录'
-
-    const typeMap = {
-      command: '命令',
-      user: '发言',
-      guild: '群组'
-    }
-
-    const conditions = utils.formatConditions(options)
-    const title = conditions.length
-      ? `${conditions.join('、')}的${typeMap[type]}统计 ——`
-      : `全局${typeMap[type]}统计 ——`
-
-    return { records, title }
-  }
-
   const stat = ctx.command('stat', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .action(async ({options}) => {
-      const result = await handleStatQuery(options, 'command')
+      const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
-
       const lines = await utils.processStatRecords(result.records, 'command', { sortBy: 'key' })
       return result.title + '\n\n' + lines.join('\n')
     })
@@ -203,9 +180,8 @@ export async function apply(ctx: Context, config: Config) {
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .action(async ({options}) => {
-      const result = await handleStatQuery(options, 'user')
+      const result = await utils.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
-
       const lines = await utils.processStatRecords(result.records, 'userId', { truncateId: true })
       return result.title + '\n\n' + lines.join('\n')
     })
@@ -216,37 +192,43 @@ export async function apply(ctx: Context, config: Config) {
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .action(async ({options}) => {
-      const result = await handleStatQuery(options, 'guild')
+      const result = await utils.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
-
       const lines = await utils.processStatRecords(result.records, 'guildId', { truncateId: true })
       return result.title + '\n\n' + lines.join('\n')
     })
 
   stat.subcommand('.list', '查看类型列表', { authority: 3 })
-    .action(async ({ session }) => {
+    .action(async () => {
       const records = await ctx.database.get('analytics.stat', {})
       if (!records?.length) return '未找到记录'
 
-      const formatList = async (key: keyof StatRecord, title: string, getName?: boolean) => {
-        const items = utils.getUniqueKeys(records, key)
-        if (!items.length) return null
+      const formatList = (key: keyof StatRecord, title: string) => {
+        const itemMap = new Map<string, string>()
 
-        if (!getName) return `${title}：\n${items.join(',')}`
+        records.forEach(record => {
+          const id = record[key] as string
+          if (!id) return
 
-        const names = await Promise.all(
-          items.map(id => utils.getName(session, id, key === 'userId' ? 'user' : 'guild'))
-        )
-        return `${title}：\n${names.map((name, i) =>
-          `${name} (${items[i].slice(0, 10)})`).join(',')}`
+          if (key === 'userId' && record.userName) {
+            itemMap.set(id, `${record.userName} (${id})`)
+          } else if (key === 'guildId' && record.guildName) {
+            itemMap.set(id, `${record.guildName} (${id})`)
+          } else {
+            itemMap.set(id, id)
+          }
+        })
+
+        const items = Array.from(itemMap.values())
+        return items.length ? `${title}：\n${items.join(', ')}` : null
       }
 
-      const parts = await Promise.all([
+      const parts = [
         formatList('platform', '平台列表'),
-        formatList('userId', '用户列表', true),
-        formatList('guildId', '群组列表', true),
+        formatList('userId', '用户列表'),
+        formatList('guildId', '群组列表'),
         formatList('command', '命令列表')
-      ])
+      ]
 
       return parts.filter(Boolean).join('\n')
     })
@@ -265,11 +247,17 @@ export async function apply(ctx: Context, config: Config) {
           command: options.command
         })
 
-        if (result === -1) {
-          return '已删除所有统计记录'
-        }
+        if (result === -1) return '已删除所有统计记录'
 
-        const conditions = utils.formatConditions(options)
+        const conditions = Object.entries({
+          user: ['用户', options.user],
+          guild: ['群组', options.guild],
+          platform: ['平台', options.platform],
+          command: ['命令', options.command]
+        })
+          .filter(([_, [__, value]]) => value)
+          .map(([_, [label, value]]) => `${label} ${value}`)
+
         return conditions.length
           ? `已删除${conditions.join('、')}的统计记录`
           : '已删除所有统计记录'
@@ -279,9 +267,9 @@ export async function apply(ctx: Context, config: Config) {
   if (config.enableImport) {
     stat.subcommand('.import', '导入统计数据', { authority: 3 })
       .option('force', '-f 覆盖现有数据')
-      .action(async ({ session, options }) => {
+      .action(async ({ options }) => {
         try {
-          await database.importLegacyData(ctx, session, options.force)
+          await database.importLegacyData(ctx, options.force)
           return '导入完成'
         } catch (e) {
           return `导入失败：${e.message}`

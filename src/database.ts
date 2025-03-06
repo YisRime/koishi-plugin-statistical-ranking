@@ -124,112 +124,81 @@ export const database = {
   /**
    * 导入历史数据
    * @param ctx Koishi上下文
-   * @param session 会话对象
    * @param overwrite 是否覆盖现有数据
    */
-  async importLegacyData(ctx: Context, session?: any, overwrite = false) {
-    try {
-      if (!ctx.database.tables['analytics.command']) {
-        throw new Error('找不到历史数据表')
+  async importLegacyData(ctx: Context, overwrite = false) {
+    if (!ctx.database.tables['analytics.command']) {
+      throw new Error('找不到历史数据表')
+    }
+
+    const [records, bindings] = await Promise.all([
+      ctx.database.get('analytics.command', {}),
+      ctx.database.get('binding', {})
+    ])
+
+    if (!records.length) throw new Error('历史数据为空')
+
+    const userIdMap = new Map(bindings
+      .filter(b => b.aid)
+      .map(b => [b.aid.toString(), { pid: b.pid, platform: b.platform }]))
+
+    const mergedRecords = new Map()
+
+    overwrite && await ctx.database.remove('analytics.stat', {})
+
+    records.forEach(cmd => {
+      const binding = userIdMap.get(cmd.userId?.toString())
+      if (!binding || !cmd.channelId) return
+
+      const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${cmd.name || ''}`
+      const timestamp = new Date((cmd.date * 86400000) + ((cmd.hour || 0) * 3600000))
+      if (isNaN(timestamp.getTime())) return
+
+      const curr = mergedRecords.get(key) || {
+        platform: binding.platform,
+        guildId: cmd.channelId,
+        userId: binding.pid,
+        command: cmd.name || null,
+        count: 0,
+        lastTime: timestamp
       }
 
-      const [records, bindings] = await Promise.all([
-        ctx.database.get('analytics.command', {}),
-        ctx.database.get('binding', {})
-      ])
+      curr.count += (cmd.count || 1)
+      curr.lastTime = new Date(Math.max(curr.lastTime.getTime(), timestamp.getTime()))
+      mergedRecords.set(key, curr)
+    })
 
-      if (!records.length) throw new Error('历史数据为空')
-      session?.send(`开始导入 ${records.length} 条记录...`)
+    const batch = Array.from(mergedRecords.values())
+    let imported = 0
 
-      const stats = { imported: 0, skipped: 0, error: 0 }
-      const skipReasons = new Map<string, number>()
-      const mergedRecords = new Map()
-      const userIdMap = new Map(bindings
-        .filter(b => b.aid)
-        .map(b => [b.aid.toString(), { pid: b.pid, platform: b.platform }]))
+    await Promise.all(batch.map(async record => {
+      const query = {
+        platform: record.platform,
+        guildId: record.guildId,
+        userId: record.userId,
+        command: record.command
+      }
 
-      overwrite && await ctx.database.remove('analytics.stat', {})
-
-      records.forEach(cmd => {
-        if (!cmd.userId || !cmd.channelId || !userIdMap.has(cmd.userId.toString()) ||
-            !cmd.date || !Number.isFinite(cmd.date) || !Number.isFinite(cmd.hour)) {
-          skipReasons.set('记录无效或缺少绑定数据', (skipReasons.get('记录无效或缺少绑定数据') || 0) + 1)
-          stats.skipped++
-          return
-        }
-
-        const binding = userIdMap.get(cmd.userId.toString())
-        const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${cmd.name || ''}`
-        const timestamp = new Date(Math.max(0, (cmd.date * 86400000) + ((cmd.hour || 0) * 3600000)))
-
-        if (isNaN(timestamp.getTime())) {
-          skipReasons.set('时间戳无效', (skipReasons.get('时间戳无效') || 0) + 1)
-          stats.skipped++
-          return
-        }
-
-        const existingRecord = mergedRecords.get(key)
-        mergedRecords.set(key, {
-          platform: binding.platform,
-          guildId: cmd.channelId,
-          userId: binding.pid,
-          command: cmd.name || null,
-          count: (existingRecord?.count || 0) + (cmd.count || 1),
-          lastTime: existingRecord
-            ? new Date(Math.max(existingRecord.lastTime.getTime(), timestamp.getTime()))
-            : timestamp
+      const [existing] = await ctx.database.get('analytics.stat', query)
+      if (existing && !overwrite) {
+        await ctx.database.set('analytics.stat', query, {
+          count: existing.count + record.count,
+          lastTime: new Date(Math.max(existing.lastTime?.getTime() || 0, record.lastTime.getTime())),
+          userName: existing.userName || '',
+          guildName: existing.guildName || ''
         })
-      })
+      } else {
+        await ctx.database.create('analytics.stat', {
+          ...query,
+          ...record,
+          userName: '',
+          guildName: ''
+        })
+      }
+      imported++
+    }))
 
-      const batch = Array.from(mergedRecords.values())
-      await Promise.all(batch.map(async record => {
-        try {
-          const query = {
-            platform: record.platform,
-            guildId: record.guildId,
-            userId: record.userId,
-            command: record.command
-          }
-
-          const [existing] = await ctx.database.get('analytics.stat', query)
-          const update = {
-            count: record.count,
-            lastTime: record.lastTime,
-            userName: '',
-            guildName: ''
-          }
-
-          if (existing && !overwrite) {
-            update.count += existing.count
-            update.lastTime = new Date(Math.max(
-              existing.lastTime?.getTime() || 0,
-              record.lastTime.getTime()
-            ))
-            update.userName = existing.userName || ''
-            update.guildName = existing.guildName || ''
-          }
-
-          await ctx.database[existing ? 'set' : 'create']('analytics.stat', query, update)
-          stats.imported++
-        } catch (err) {
-          ctx.logger.warn('导入单条记录失败:', err)
-          stats.error++
-        }
-      }))
-
-      return [
-        `导入完成：总计 ${records.length} 条记录`,
-        `- 成功：${stats.imported} 条`,
-        `- 跳过：${stats.skipped} 条`,
-        `- 失败：${stats.error} 条`,
-        skipReasons.size ? '\n跳过原因：' : '',
-        ...Array.from(skipReasons).map(([reason, count]) => `- ${reason}: ${count} 条`)
-      ].filter(Boolean).join('\n')
-
-    } catch (e) {
-      ctx.logger.error('导入失败:', e)
-      throw e
-    }
+    return `导入完成：成功导入 ${imported} 条记录`
   },
 
   /**

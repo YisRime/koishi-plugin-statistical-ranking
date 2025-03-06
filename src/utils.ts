@@ -1,6 +1,5 @@
+import { Context } from 'koishi'
 import { StatRecord } from './index'
-
-type NameType = 'user' | 'guild'
 
 interface QueryOptions {
   user?: string
@@ -46,89 +45,43 @@ class StatMap {
  */
 export const utils = {
   /**
-   * 获取用户或群组名称
-   * @param session - 会话对象
-   * @param id - 目标 ID
-   * @param type - 类型(user/guild)
-   * @returns Promise<string> 返回名称，获取失败则返回原始 ID
-   */
-  async getName(session: any, id: string, type: NameType): Promise<string> {
-    if (!session?.bot) return id
-
-    try {
-      if (type === 'user') {
-        return session.userId === id ? session.username ?? id
-          : (await session.bot.getGuildMember?.(session.guildId, id))?.username ?? id
-      }
-
-      return (await session.bot.getGuild?.(id))?.name ?? id
-    } catch {
-      return id
-    }
-  },
-
-  /**
    * 格式化时间差
    * @param date - 目标时间
    * @returns string 格式化后的时间差字符串
    * @description 将时间转换为"X年X月前"等易读格式
    */
   formatTimeAgo(date: Date): string {
-    if (!date?.getTime() || isNaN(date.getTime())) return '未知时间'.padStart(9)
+    if (!date?.getTime()) return '未知时间'.padStart(9)
 
-    const diff = Math.max(0, Date.now() - date.getTime())
+    const diff = Date.now() - date.getTime()
+    if (diff < 0) return '未来时间'.padStart(9)
     if (diff < 10000) return '一会前'.padStart(9)
 
-    const units: [number, string][] = [[31536000000, '年'], [2592000000, '月'],
-      [86400000, '天'], [3600000, '小时'], [60000, '分钟']]
+    const units = [
+      [31536000000, '年'],
+      [2592000000, '月'],
+      [86400000, '天'],
+      [3600000, '小时'],
+      [60000, '分钟']
+    ] as const
 
-    const parts = []
-    let remaining = diff
+    for (let i = 0; i < units.length - 1; i++) {
+      const [mainDiv, mainUnit] = units[i]
+      const [subDiv, subUnit] = units[i + 1]
 
-    for (const [div, unit] of units) {
-      const val = Math.floor(remaining / div)
-      if (val > 0) {
-        parts.push(`${val}${unit}`)
-        if (parts.length === 2) break
-        remaining %= div
+      const mainVal = Math.floor(diff / mainDiv)
+      if (mainVal > 0) {
+        const remaining = diff % mainDiv
+        const subVal = Math.floor(remaining / subDiv)
+        const text = subVal > 0
+          ? `${mainVal}${mainUnit}${subVal}${subUnit}前`
+          : `${mainVal}${mainUnit}前`
+        return text.padStart(9)
       }
     }
 
-    const text = (parts.length ? parts.join('') : '一会') + '前'
-    return text.padStart(9)
-  },
-
-  /**
-   * 验证和规范化查询选项，并直接构建数据库查询
-   */
-  buildQueryFromOptions(options: QueryOptions) {
-    return Object.entries({
-      userId: options.user,
-      guildId: options.guild,
-      platform: options.platform,
-      command: options.command
-    }).reduce((query, [key, value]) => {
-      if (value) query[key] = value
-      return query
-    }, {} as Record<string, any>)
-  },
-
-  /**
-   * 格式化查询条件为可读文本
-   */
-  formatConditions(options: QueryOptions): string[] {
-    return Object.entries(options)
-      .filter(([_, value]) => value)
-      .map(([key, value]) => {
-        switch(key) {
-          case 'user': return `用户 ${value}`
-          case 'guild': return `群组 ${value}`
-          case 'platform': return `平台 ${value}`
-          case 'command': return `命令 ${value}`
-          default: return ''
-        }
-      })
-      .filter(Boolean)
+    const minutes = Math.floor(diff / 60000)
+    return (minutes > 0 ? `${minutes}分钟前` : '一会前').padStart(9)
   },
 
   async processStatRecords(
@@ -178,10 +131,6 @@ export const utils = {
     return stats.entries().map(([key]) => key).filter(Boolean)
   },
 
-  getGuildId(session: any): string {
-    return session.guildId || session.groupId || session.channelId || 'private'
-  },
-
   async getPlatformId(session: any): Promise<string> {
     if (!session?.userId || !session?.platform || !session?.app?.database) return session?.userId || ''
 
@@ -204,7 +153,7 @@ export const utils = {
     if (!session) return null
 
     const platform = session.platform
-    const guildId = utils.getGuildId(session)
+    const guildId = session.guildId || session.groupId || session.channelId
     const userId = await utils.getPlatformId(session)
     const bot = session.bot
 
@@ -223,5 +172,38 @@ export const utils = {
       userName,
       guildName
     }
+  },
+
+  /**
+   * 处理统计查询
+   */
+  async handleStatQuery(ctx: Context, options: QueryOptions, type: 'command' | 'user' | 'guild') {
+    const query: Record<string, any> = {}
+    const typeMap = { command: '命令', user: '发言', guild: '群组' }
+
+    if (options.user) query.userId = options.user
+    if (options.guild) query.guildId = options.guild
+    if (options.platform) query.platform = options.platform
+    if (type === 'user') query.command = null
+    else if (type === 'command') query.command = options.command || { $not: null }
+    else if (options.command) query.command = options.command
+
+    const records = await ctx.database.get('analytics.stat', query)
+    if (!records?.length) return '未找到记录'
+
+    const conditions = Object.entries({
+      user: ['用户', options.user],
+      guild: ['群组', options.guild],
+      platform: ['平台', options.platform],
+      command: ['命令', options.command]
+    })
+      .filter(([_, [__, value]]) => value)
+      .map(([_, [label, value]]) => `${label} ${value}`)
+
+    const title = conditions.length
+      ? `${conditions.join('、')}的${typeMap[type]}统计 ——`
+      : `全局${typeMap[type]}统计 ——`
+
+    return { records, title }
   },
 }
