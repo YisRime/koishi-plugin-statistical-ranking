@@ -12,7 +12,7 @@ import { utils } from './utils'
  * @public
  */
 export const name = 'statistical-ranking'
-export const inject = ['database']  // 修改这里，移除 required 选项
+export const inject = ['database']
 
 /**
  * 插件配置接口
@@ -155,7 +155,6 @@ interface BindingRecord {
 export async function apply(ctx: Context, config: Config) {
   database.initialize(ctx)
 
-  // 简化事件处理
   const handleRecord = async (session: any, command?: string) => {
     const info = await utils.getSessionInfo(session)
     info && await database.saveRecord(ctx, { ...info, command })
@@ -164,7 +163,6 @@ export async function apply(ctx: Context, config: Config) {
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
   ctx.on('message', (session) => handleRecord(session, null))
 
-  // 提取公共查询处理逻辑
   const handleStatQuery = async (options: any, type: 'command' | 'user' | 'guild') => {
     const query = utils.buildQueryFromOptions(options)
     if (type === 'user') query.command = null
@@ -196,7 +194,7 @@ export async function apply(ctx: Context, config: Config) {
       const result = await handleStatQuery(options, 'command')
       if (typeof result === 'string') return result
 
-      const lines = await utils.processStatRecords(result.records, 'command', null, 'key')
+      const lines = await utils.processStatRecords(result.records, 'command', { sortBy: 'key' })
       return result.title + '\n\n' + lines.join('\n')
     })
 
@@ -204,16 +202,11 @@ export async function apply(ctx: Context, config: Config) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({session, options}) => {
+    .action(async ({options}) => {
       const result = await handleStatQuery(options, 'user')
       if (typeof result === 'string') return result
 
-      const formatUserStat = async (userId: string, data: { count: number, lastTime: Date }) => {
-        const name = await utils.getName(session, userId, 'user')
-        return `${name.padEnd(10)}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
-      }
-
-      const lines = await utils.processStatRecords(result.records, 'userId', formatUserStat, 'count')
+      const lines = await utils.processStatRecords(result.records, 'userId', { truncateId: true })
       return result.title + '\n\n' + lines.join('\n')
     })
 
@@ -222,16 +215,11 @@ export async function apply(ctx: Context, config: Config) {
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
-    .action(async ({session, options}) => {
+    .action(async ({options}) => {
       const result = await handleStatQuery(options, 'guild')
       if (typeof result === 'string') return result
 
-      const formatGuildStat = async (guildId: string, data: { count: number, lastTime: Date }) => {
-        const name = await utils.getName(session, guildId, 'guild')
-        return `${name.padEnd(10)}${data.count.toString().padStart(5)}次 ${utils.formatTimeAgo(data.lastTime)}`
-      }
-
-      const lines = await utils.processStatRecords(result.records, 'guildId', formatGuildStat, 'count')
+      const lines = await utils.processStatRecords(result.records, 'guildId', { truncateId: true })
       return result.title + '\n\n' + lines.join('\n')
     })
 

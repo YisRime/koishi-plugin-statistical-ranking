@@ -77,7 +77,7 @@ export const utils = {
     if (!date?.getTime() || isNaN(date.getTime())) return '未知时间'.padStart(9)
 
     const diff = Math.max(0, Date.now() - date.getTime())
-    if (diff < 60000) return '一会前'.padStart(9)
+    if (diff < 10000) return '一会前'.padStart(9)
 
     const units: [number, string][] = [[31536000000, '年'], [2592000000, '月'],
       [86400000, '天'], [3600000, '小时'], [60000, '分钟']]
@@ -134,9 +134,10 @@ export const utils = {
   async processStatRecords(
     records: StatRecord[],
     aggregateKey: keyof StatRecord,
-    formatFn?: (key: string, data: { count: number, lastTime: Date }) => Promise<string>,
-    sortBy: 'count' | 'key' = 'count',
-    truncateId = false
+    options: {
+      truncateId?: boolean
+      sortBy?: 'count' | 'key'
+    } = {}
   ) {
     const stats = new StatMap(aggregateKey === 'command' ?
       (k: string) => k?.split('.')[0] || '' : undefined)
@@ -151,11 +152,9 @@ export const utils = {
       }
     }
 
-    const entries = stats.sortedEntries(sortBy)
-    if (formatFn) return Promise.all(entries.map(([k, d]) => formatFn(k, d)))
-
+    const entries = stats.sortedEntries(options.sortBy || 'count')
     return entries.map(([key, {count, lastTime}]) =>
-      `${(nameMap.get(key) || (truncateId ? key.slice(0, 10) : key)).padEnd(10)}${
+      `${(nameMap.get(key) || (options.truncateId ? key.slice(0, 10) : key)).padEnd(10)}${
         count.toString().padStart(5)}次 ${utils.formatTimeAgo(lastTime)}`)
   },
 
