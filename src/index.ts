@@ -167,7 +167,6 @@ export async function apply(ctx: Context, config: Config) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .option('command', '-c [command:string] 指定命令统计')
     .action(async ({options}) => {
       const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
@@ -176,7 +175,6 @@ export async function apply(ctx: Context, config: Config) {
     })
 
   stat.subcommand('.user', '查看发言统计')
-    .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .action(async ({options}) => {
@@ -188,7 +186,6 @@ export async function apply(ctx: Context, config: Config) {
 
   stat.subcommand('.guild', '查看群组统计')
     .option('user', '-u [user:string] 指定用户统计')
-    .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .action(async ({options}) => {
@@ -220,7 +217,7 @@ export async function apply(ctx: Context, config: Config) {
         })
 
         const items = Array.from(itemMap.values())
-        return items.length ? `${title}：\n${items.join(', ')}` : null
+        return items.length ? `${title}：\n${items.join(',')}` : null
       }
 
       const parts = [

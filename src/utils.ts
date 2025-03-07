@@ -51,37 +51,40 @@ export const utils = {
    * @description 将时间转换为"X年X月前"等易读格式
    */
   formatTimeAgo(date: Date): string {
-    if (!date?.getTime()) return '未知时间'.padStart(9)
+    if (!date?.getTime()) return '未知时间'.padStart(7)
 
     const diff = Date.now() - date.getTime()
-    if (diff < 0) return '未来时间'.padStart(9)
-    if (diff < 10000) return '一会前'.padStart(9)
+    if (diff === 0) return '现在'.padStart(7)
+    if (Math.abs(diff) < 10000) return (diff < 0 ? '一会后' : '一会前').padStart(7)
 
     const units = [
       [31536000000, '年'],
       [2592000000, '月'],
       [86400000, '天'],
-      [3600000, '小时'],
-      [60000, '分钟']
+      [3600000, '时'],
+      [60000, '分']
     ] as const
+
+    const absDiff = Math.abs(diff)
+    const suffix = diff < 0 ? '后' : '前'
 
     for (let i = 0; i < units.length - 1; i++) {
       const [mainDiv, mainUnit] = units[i]
       const [subDiv, subUnit] = units[i + 1]
 
-      const mainVal = Math.floor(diff / mainDiv)
+      const mainVal = Math.floor(absDiff / mainDiv)
       if (mainVal > 0) {
-        const remaining = diff % mainDiv
+        const remaining = absDiff % mainDiv
         const subVal = Math.floor(remaining / subDiv)
         const text = subVal > 0
-          ? `${mainVal}${mainUnit}${subVal}${subUnit}前`
-          : `${mainVal}${mainUnit}前`
-        return text.padStart(9)
+          ? `${mainVal}${mainUnit}${subVal}${subUnit}${suffix}`
+          : `${mainVal}${mainUnit}${suffix}`
+        return text.padStart(7)
       }
     }
 
-    const minutes = Math.floor(diff / 60000)
-    return (minutes > 0 ? `${minutes}分钟前` : '一会前').padStart(9)
+    const minutes = Math.floor(absDiff / 60000)
+    return (minutes > 0 ? `${minutes}分${suffix}` : `一会${suffix}`).padStart(7)
   },
 
   async processStatRecords(
@@ -198,7 +201,7 @@ export const utils = {
       command: ['命令', options.command]
     })
       .filter(([_, [__, value]]) => value)
-      .map(([_, [label, value]]) => `${label} ${value}`)
+      .map(([_, [label, value]]) => `${label}${value}`)
 
     const title = conditions.length
       ? `${conditions.join('、')}的${typeMap[type]}统计 ——`
