@@ -228,8 +228,12 @@ export const utils = {
     if (!skipPaging && totalPages > 1) {
       formattedTitle = `${title.endsWith(' ——') ? title.substring(0, title.length - 3) : title}（第${currentPage}/${totalPages}页）——`
     }
-    const totalWidth = 25
-    const timeWidth = 10
+
+    // 定义固定宽度
+    const totalWidth = 36    // 总宽度
+    const countWidth = 8     // 为计数预留的宽度
+    const timeWidth = 10     // 为时间预留的宽度
+    const nameWidth = totalWidth - countWidth - timeWidth - 2  // 为名称预留的宽度
     // 预处理所有数据，获取显示信息
     const displayItems = pagedEntries.map(([key, {count, lastTime}]) => {
       let displayName = nameMap.get(key) || key
@@ -246,32 +250,30 @@ export const utils = {
       const countStr = count.toString() + countLabel
       // 格式化时间
       const timeAgo = utils.formatTimeAgo(lastTime)
-      const truncatedTime = utils.truncateByDisplayWidth(timeAgo, timeWidth)
       return {
         key,
         displayName,
         countStr,
-        truncatedTime,
-        nameWidth: utils.getStringDisplayWidth(displayName),
-        countWidth: utils.getStringDisplayWidth(countStr)
+        timeAgo
       }
     })
-    // 找出最长的名称宽度
-    const maxNameWidth = Math.max(...displayItems.map(item => item.nameWidth))
-    const maxCountWidth = Math.max(...displayItems.map(item => item.countWidth))
-    // 确保总宽度不超过限制，并保证至少有一个空格
-    const availableWidth = Math.min(totalWidth, maxNameWidth + maxCountWidth + 1)
-    const adjustedNameWidth = availableWidth - maxCountWidth - 1
+
     return {
       items: displayItems.map(item => {
-        // 截断名称
-        const truncatedName = utils.truncateByDisplayWidth(item.displayName, adjustedNameWidth)
+        // 截断名称到固定宽度
+        const truncatedName = utils.truncateByDisplayWidth(item.displayName, nameWidth)
+        // 截断计数部分确保不超出宽度
+        const truncatedCount = utils.truncateByDisplayWidth(item.countStr, countWidth)
+        // 截断时间部分确保不超出宽度
+        const truncatedTime = utils.truncateByDisplayWidth(item.timeAgo, timeWidth)
+        // 计算名称部分的右侧填充
         const nameDisplayWidth = utils.getStringDisplayWidth(truncatedName)
-        // 计算空格数量
-        const paddingWidth = (maxNameWidth - nameDisplayWidth) + 1
-        const padding = ' '.repeat(Math.max(1, paddingWidth))
-        // 组合最终显示字符串
-        return `${truncatedName}${padding}${item.countStr} ${item.truncatedTime}`
+        const namePadding = ' '.repeat(Math.max(0, nameWidth - nameDisplayWidth))
+        // 计算计数部分的右侧填充
+        const countDisplayWidth = utils.getStringDisplayWidth(truncatedCount)
+        const countPadding = ' '.repeat(Math.max(0, countWidth - countDisplayWidth))
+        // 组合最终显示字符串，保证对齐
+        return `${truncatedName}${namePadding} ${truncatedCount}${countPadding} ${truncatedTime}`
       }),
       page: currentPage,
       totalPages,
