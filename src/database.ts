@@ -50,16 +50,13 @@ export const database = {
       ctx.logger.warn('Invalid record data:', data)
       return
     }
-
     const target = {
       platform: data.platform,
       guildId: data.guildId,
       userId: data.userId
     }
-
     const config = ctx.config.statistical_ranking
     if (!(await database.checkPermissions(config, target))) return
-
     await database.upsertRecord(ctx, data)
   },
 
@@ -70,15 +67,16 @@ export const database = {
    * @returns 是否有权限
    */
   async checkPermissions(config: Config, target: Target): Promise<boolean> {
-    if (config?.enableBlacklist && config?.blacklist?.length) {
-      if (utils.matchRuleList(config.blacklist, target)) {
-        return false
-      }
+    if (!config?.enableFilter) {
+      return true
     }
-    if (config?.enableWhitelist && config?.whitelist?.length) {
-      if (!utils.matchRuleList(config.whitelist, target)) {
-        return false
-      }
+    // 优先检查白名单
+    if (config?.whitelist?.length) {
+      return utils.matchRuleList(config.whitelist, target)
+    }
+    // 白名单为空时，检查黑名单
+    if (config?.blacklist?.length) {
+      return !utils.matchRuleList(config.blacklist, target)
     }
     return true
   },
@@ -97,9 +95,7 @@ export const database = {
         userId: data.userId,
         command: data.command ?? null
       }
-
       const existing = await ctx.database.get('analytics.stat', query)
-
       if (existing.length) {
         await ctx.database.set('analytics.stat', query, {
           userName: data.userName || existing[0].userName || '',
@@ -130,30 +126,22 @@ export const database = {
     if (!ctx.database.tables['analytics.command']) {
       throw new Error('找不到历史数据表')
     }
-
     const [records, bindings] = await Promise.all([
       ctx.database.get('analytics.command', {}),
       ctx.database.get('binding', {})
     ])
-
     if (!records.length) throw new Error('历史数据为空')
-
     const userIdMap = new Map(bindings
       .filter(b => b.aid)
       .map(b => [b.aid.toString(), { pid: b.pid, platform: b.platform }]))
-
     const mergedRecords = new Map()
-
     overwrite && await ctx.database.remove('analytics.stat', {})
-
     records.forEach(cmd => {
       const binding = userIdMap.get(cmd.userId?.toString())
       if (!binding || !cmd.channelId) return
-
       const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${cmd.name || ''}`
       const timestamp = new Date((cmd.date * 86400000) + ((cmd.hour || 0) * 3600000))
       if (isNaN(timestamp.getTime())) return
-
       const curr = mergedRecords.get(key) || {
         platform: binding.platform,
         guildId: cmd.channelId,
@@ -162,15 +150,12 @@ export const database = {
         count: 0,
         lastTime: timestamp
       }
-
       curr.count += (cmd.count || 1)
       curr.lastTime = new Date(Math.max(curr.lastTime.getTime(), timestamp.getTime()))
       mergedRecords.set(key, curr)
     })
-
     const batch = Array.from(mergedRecords.values())
     let imported = 0
-
     await Promise.all(batch.map(async record => {
       const query = {
         platform: record.platform,
@@ -178,7 +163,6 @@ export const database = {
         userId: record.userId,
         command: record.command
       }
-
       const [existing] = await ctx.database.get('analytics.stat', query)
       if (existing && !overwrite) {
         await ctx.database.set('analytics.stat', query, {
@@ -197,7 +181,6 @@ export const database = {
       }
       imported++
     }))
-
     return `导入完成：成功导入 ${imported} 条记录`
   },
 
@@ -218,7 +201,6 @@ export const database = {
       await database.initialize(ctx)
       return -1
     }
-
     const query: any = {}
     for (const [key, value] of Object.entries(options)) {
       if (value) query[key] = value

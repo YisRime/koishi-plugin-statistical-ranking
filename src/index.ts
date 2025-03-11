@@ -19,18 +19,22 @@ export const inject = ['database']
  * @interface Config
  * @property {boolean} [enableImport] - 是否启用数据导入功能
  * @property {boolean} [enableClear] - 是否启用数据清除功能
- * @property {boolean} [enableBlacklist] - 是否启用黑名单功能
- * @property {boolean} [enableWhitelist] - 是否启用白名单功能
- * @property {string[]} [blacklist] - 黑名单列表
- * @property {string[]} [whitelist] - 白名单列表
+ * @property {boolean} [enableFilter] - 是否启用记录过滤功能
+ * @property {string[]} [blacklist] - 记录黑名单列表
+ * @property {string[]} [whitelist] - 记录白名单列表
+ * @property {boolean} [enableDisplayFilter] - 是否启用显示过滤功能
+ * @property {string[]} [displayBlacklist] - 显示过滤黑名单
+ * @property {string[]} [displayWhitelist] - 显示过滤白名单
  */
 export interface Config {
   enableImport?: boolean
   enableClear?: boolean
-  enableBlacklist?: boolean
-  enableWhitelist?: boolean
+  enableFilter?: boolean
   blacklist?: string[]
   whitelist?: string[]
+  enableDisplayFilter?: boolean
+  displayBlacklist?: string[]
+  displayWhitelist?: string[]
 }
 
 /**
@@ -41,14 +45,17 @@ export const Config = Schema.intersect([
   Schema.object({
     enableImport: Schema.boolean().default(false).description('启用统计数据导入命令'),
     enableClear: Schema.boolean().default(false).description('启用统计数据清除命令'),
-    enableBlacklist: Schema.boolean().default(false).description('启用黑名单'),
-    enableWhitelist: Schema.boolean().default(false).description('启用白名单'),
+    enableFilter: Schema.boolean().default(false).description('启用记录过滤功能'),
+    enableDisplayFilter: Schema.boolean().default(false).description('启用显示过滤功能'),
   }).description('基础配置'),
   Schema.union([
     Schema.object({
-      enableBlacklist: Schema.const(true).required(),
+      enableFilter: Schema.const(true).required(),
+      whitelist: Schema.array(Schema.string())
+        .description('记录白名单，仅统计这些记录（先于黑名单生效）')
+        .default([]),
       blacklist: Schema.array(Schema.string())
-        .description('黑名单列表')
+        .description('记录黑名单，将不会统计以下命令/用户/群组/平台')
         .default([
           'onebot:12345:67890',
           'qq::12345',
@@ -60,13 +67,16 @@ export const Config = Schema.intersect([
   ]),
   Schema.union([
     Schema.object({
-      enableWhitelist: Schema.const(true).required(),
-      whitelist: Schema.array(Schema.string())
-        .description('白名单列表')
+      enableDisplayFilter: Schema.const(true).required(),
+      displayWhitelist: Schema.array(Schema.string())
+        .description('显示白名单，仅展示这些统计记录（先于黑名单生效）')
+        .default([]),
+      displayBlacklist: Schema.array(Schema.string())
+        .description('显示黑名单，将不会默认展示以下命令/用户/群组/平台')
         .default([
           'onebot:12345:67890',
           'qq::12345',
-          'telegram::',
+          'sandbox::',
           '.help',
         ]),
     }),
@@ -154,10 +164,34 @@ interface BindingRecord {
  */
 export async function apply(ctx: Context, config: Config) {
   database.initialize(ctx)
-
   const handleRecord = async (session: any, command?: string) => {
     const info = await utils.getSessionInfo(session)
-    info && await database.saveRecord(ctx, { ...info, command })
+    if (!info) return
+    if (config.enableFilter) {
+      // 优先检查白名单
+      if (config.whitelist?.length) {
+        if (!utils.matchRuleList(config.whitelist, {
+          platform: info.platform,
+          guildId: info.guildId,
+          userId: info.userId,
+          command
+        })) {
+          return
+        }
+      }
+      // 白名单为空时，检查黑名单
+      else if (config.blacklist?.length) {
+        if (utils.matchRuleList(config.blacklist, {
+          platform: info.platform,
+          guildId: info.guildId,
+          userId: info.userId,
+          command
+        })) {
+          return
+        }
+      }
+    }
+    await database.saveRecord(ctx, { ...info, command })
   }
 
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
@@ -167,20 +201,33 @@ export async function apply(ctx: Context, config: Config) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
+    .option('all', '-a 显示所有记录')
     .action(async ({options}) => {
       const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
-      const lines = await utils.processStatRecords(result.records, 'command', { sortBy: 'key' })
+      const lines = await utils.processStatRecords(result.records, 'command', {
+        sortBy: 'key',
+        limit: options.all ? undefined : 12,
+        disableCommandMerge: options.all,
+        displayBlacklist: !options.all && config.enableDisplayFilter ? config.displayBlacklist : undefined,
+        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined
+      })
       return result.title + '\n\n' + lines.join('\n')
     })
 
   stat.subcommand('.user', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
+    .option('all', '-a 显示所有记录')
     .action(async ({options}) => {
       const result = await utils.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
-      const lines = await utils.processStatRecords(result.records, 'userId', { truncateId: true })
+      const lines = await utils.processStatRecords(result.records, 'userId', {
+        truncateId: true,
+        limit: options.all ? undefined : 12,
+        displayBlacklist: !options.all && config.enableDisplayFilter ? config.displayBlacklist : undefined,
+        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined
+      })
       return result.title + '\n\n' + lines.join('\n')
     })
 
@@ -188,25 +235,30 @@ export async function apply(ctx: Context, config: Config) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
+    .option('all', '-a 显示所有记录')
     .action(async ({options}) => {
       const result = await utils.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
-      const lines = await utils.processStatRecords(result.records, 'guildId', { truncateId: true })
+      const lines = await utils.processStatRecords(result.records, 'guildId', {
+        truncateId: true,
+        limit: options.all ? undefined : 12,
+        displayBlacklist: !options.all && config.enableDisplayFilter ? config.displayBlacklist : undefined,
+        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined
+      })
       return result.title + '\n\n' + lines.join('\n')
     })
 
   stat.subcommand('.list', '查看类型列表', { authority: 3 })
-    .action(async () => {
+    .option('user', '-u 显示用户列表')
+    .option('guild', '-g 显示群组列表')
+    .action(async ({ options }) => {
       const records = await ctx.database.get('analytics.stat', {})
       if (!records?.length) return '未找到记录'
-
       const formatList = (key: keyof StatRecord, title: string) => {
         const itemMap = new Map<string, string>()
-
         records.forEach(record => {
           const id = record[key] as string
           if (!id) return
-
           if (key === 'userId' && record.userName) {
             itemMap.set(id, `${record.userName} (${id})`)
           } else if (key === 'guildId' && record.guildName) {
@@ -215,19 +267,18 @@ export async function apply(ctx: Context, config: Config) {
             itemMap.set(id, id)
           }
         })
-
         const items = Array.from(itemMap.values())
         return items.length ? `${title}：\n${items.join(',')}` : null
       }
-
-      const parts = [
-        formatList('platform', '平台列表'),
-        formatList('userId', '用户列表'),
-        formatList('guildId', '群组列表'),
-        formatList('command', '命令列表')
-      ]
-
-      return parts.filter(Boolean).join('\n')
+      const hasParams = options.user || options.guild
+      const parts: (string | null)[] = []
+      if (!hasParams) {
+        parts.push(formatList('platform', '平台列表'))
+        parts.push(formatList('command', '命令列表'))
+      }
+      if (options.user) parts.push(formatList('userId', '用户列表'))
+      if (options.guild) parts.push(formatList('guildId', '群组列表'))
+      return parts.filter(Boolean).join('\n\n')
     })
 
   if (config.enableClear) {
@@ -243,9 +294,7 @@ export async function apply(ctx: Context, config: Config) {
           guildId: options.guild,
           command: options.command
         })
-
         if (result === -1) return '已删除所有统计记录'
-
         const conditions = Object.entries({
           user: ['用户', options.user],
           guild: ['群组', options.guild],
@@ -253,14 +302,12 @@ export async function apply(ctx: Context, config: Config) {
           command: ['命令', options.command]
         })
           .filter(([_, [__, value]]) => value)
-          .map(([_, [label, value]]) => `${label} ${value}`)
-
+          .map(([_, [label, value]]) => `${label}${value}`)
         return conditions.length
           ? `已删除${conditions.join('、')}的统计记录`
           : '已删除所有统计记录'
       })
   }
-
   if (config.enableImport) {
     stat.subcommand('.import', '导入统计数据', { authority: 3 })
       .option('force', '-f 覆盖现有数据')
