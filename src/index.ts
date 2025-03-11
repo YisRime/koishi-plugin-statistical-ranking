@@ -197,70 +197,91 @@ export async function apply(ctx: Context, config: Config) {
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
   ctx.on('message', (session) => handleRecord(session, null))
 
-  const stat = ctx.command('stat', '查看命令统计')
+  const stat = ctx.command('stat [arg:string]', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('all', '-a 显示所有记录')
-    .option('page', '-P [page:number] 指定页码', { fallback: 1 })
-    .action(async ({options}) => {
+    .option('page', '-n [page:number] 指定页码', { fallback: 1 })
+    .action(async ({options, args}) => {
+      const arg = args[0]?.toLowerCase()
+      if (arg === 'all') {
+        options.all = true
+      } else if (arg && /^\d+$/.test(arg)) {
+        options.page = parseInt(arg)
+      }
       const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
-      const pageSize = 10
+      const pageSize = 15
       const processed = await utils.processStatRecords(result.records, 'command', {
         sortBy: 'key',
         disableCommandMerge: options.all,
-        displayBlacklist: !options.all && config.enableDisplayFilter ? config.displayBlacklist : undefined,
-        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined,
+        displayBlacklist: options.all ? [] : (config.enableDisplayFilter ? config.displayBlacklist : []),
+        displayWhitelist: options.all ? [] : (config.enableDisplayFilter ? config.displayWhitelist : []),
         page: options.page || 1,
         pageSize,
-        title: result.title
+        title: result.title,
+        skipPaging: options.all
       })
 
-      return processed.title + '\n\n' + processed.items.join('\n')
+      return processed.title + '\n' + processed.items.join('\n')
     })
 
-  stat.subcommand('.user', '查看发言统计')
+  stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('all', '-a 显示所有记录')
-    .option('page', '-P [page:number] 指定页码', { fallback: 1 })
-    .action(async ({options}) => {
+    .option('page', '-n [page:number] 指定页码', { fallback: 1 })
+    .action(async ({options, args}) => {
+      const arg = args[0]?.toLowerCase()
+      if (arg === 'all') {
+        options.all = true
+      } else if (arg && /^\d+$/.test(arg)) {
+        options.page = parseInt(arg)
+      }
       const result = await utils.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
-      const pageSize = 10
+      const pageSize = 15
       const processed = await utils.processStatRecords(result.records, 'userId', {
         truncateId: true,
-        displayBlacklist: !options.all && config.enableDisplayFilter ? config.displayBlacklist : undefined,
-        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined,
+        displayBlacklist: options.all ? [] : (config.enableDisplayFilter ? config.displayBlacklist : []),
+        displayWhitelist: options.all ? [] : (config.enableDisplayFilter ? config.displayWhitelist : []),
         page: options.page || 1,
         pageSize,
-        title: result.title
+        title: result.title,
+        skipPaging: options.all
       })
 
-      return processed.title + '\n\n' + processed.items.join('\n')
+      return processed.title + '\n' + processed.items.join('\n')
     })
 
-  stat.subcommand('.guild', '查看群组统计')
+  stat.subcommand('.guild [arg:string]', '查看群组统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .option('all', '-a 显示所有记录')
-    .option('page', '-P [page:number] 指定页码', { fallback: 1 })
-    .action(async ({options}) => {
+    .option('page', '-n [page:number] 指定页码', { fallback: 1 })
+    .action(async ({options, args}) => {
+      const arg = args[0]?.toLowerCase()
+      if (arg === 'all') {
+        options.all = true
+      } else if (arg && /^\d+$/.test(arg)) {
+        options.page = parseInt(arg)
+      }
       const result = await utils.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
-      const pageSize = 10
+      const pageSize = 15
       const processed = await utils.processStatRecords(result.records, 'guildId', {
         truncateId: true,
-        displayBlacklist: !options.all && config.enableDisplayFilter ? config.displayBlacklist : undefined,
-        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined,
+        displayBlacklist: options.all ? [] : (config.enableDisplayFilter ? config.displayBlacklist : []),
+        displayWhitelist: options.all ? [] : (config.enableDisplayFilter ? config.displayWhitelist : []),
         page: options.page || 1,
         pageSize,
-        title: result.title
+        title: result.title,
+        skipPaging: options.all
       })
 
-      return processed.title + '\n\n' + processed.items.join('\n')
+      return processed.title + '\n' + processed.items.join('\n')
     })
 
   stat.subcommand('.list', '查看类型列表', { authority: 3 })
@@ -283,7 +304,7 @@ export async function apply(ctx: Context, config: Config) {
           }
         })
         const items = Array.from(itemMap.values())
-        return items.length ? `${title}：\n${items.join(',')}` : null
+        return items.length ? `${title} ——\n${items.join(',')}` : null
       }
       const hasParams = options.user || options.guild
       const parts: (string | null)[] = []
@@ -297,7 +318,7 @@ export async function apply(ctx: Context, config: Config) {
     })
 
   if (config.enableClear) {
-    stat.subcommand('.clear', '清除统计数据', { authority: 3 })
+    stat.subcommand('.clear', '清除统计数据', { authority: 4 })
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
       .option('guild', '-g [guild:string] 指定群组')
@@ -324,7 +345,7 @@ export async function apply(ctx: Context, config: Config) {
       })
   }
   if (config.enableImport) {
-    stat.subcommand('.import', '导入统计数据', { authority: 3 })
+    stat.subcommand('.import', '导入统计数据', { authority: 4 })
       .option('force', '-f 覆盖现有数据')
       .action(async ({ options }) => {
         try {
