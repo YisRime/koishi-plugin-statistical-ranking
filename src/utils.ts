@@ -15,6 +15,9 @@ export interface StatProcessOptions {
   truncateId?: boolean
   displayBlacklist?: string[]
   displayWhitelist?: string[]
+  page?: number
+  pageSize?: number
+  title?: string
 }
 
 /**
@@ -165,7 +168,10 @@ export const utils = {
       disableCommandMerge,
       truncateId,
       displayBlacklist = [],
-      displayWhitelist = []
+      displayWhitelist = [],
+      page = 1,
+      pageSize = 10,
+      title = ''
     } = options
     const stats = new StatMap(
       (aggregateKey === 'command' && !disableCommandMerge)
@@ -203,37 +209,58 @@ export const utils = {
       }
       entries = filteredEntries
     }
-    const limitedEntries = limit && entries.length > limit
-      ? entries.slice(0, limit)
-      : entries
-    return limitedEntries.map(([key, {count, lastTime}]) => {
-      let displayName = nameMap.get(key) || key
-      // 处理显示名称
-      if (truncateId) {
-        if (nameMap.has(key)) {
-          displayName = displayName || key
-        } else {
-          displayName = key
+
+    // 计算分页
+    const totalItems = entries.length
+    const totalPages = limit ? Math.ceil(Math.min(totalItems, limit) / pageSize) : Math.ceil(totalItems / pageSize)
+    const currentPage = Math.min(Math.max(1, page), totalPages || 1)
+    const startIdx = (currentPage - 1) * pageSize
+    const endIdx = limit ? Math.min(startIdx + pageSize, limit, totalItems) : Math.min(startIdx + pageSize, totalItems)
+    const pagedEntries = entries.slice(startIdx, endIdx)
+    let formattedTitle = title
+    if (totalPages > 1) {
+      formattedTitle = title.endsWith(' ——')
+        ? title.replace(' ——', `（第 ${currentPage}/${totalPages} 页）——`)
+        : `${title}（第 ${currentPage}/${totalPages} 页）`
+    }
+
+    return {
+      items: pagedEntries.map(([key, {count, lastTime}]) => {
+        let displayName = nameMap.get(key) || key
+        // 处理显示名称
+        if (truncateId) {
+          if (nameMap.has(key)) {
+            displayName = displayName || key
+          } else {
+            displayName = key
+          }
         }
-      }
-      // 分配字符空间
-      const maxNameWidth = 14
-      const countWidth = 6
-      const timeWidth = 10
-      // 截断名称
-      const truncatedName = utils.truncateByDisplayWidth(displayName, maxNameWidth)
-      // 计算名称实际宽度
-      const actualNameWidth = utils.getStringDisplayWidth(truncatedName)
-      // 计算填充的空格
-      const namePadding = ' '.repeat(maxNameWidth - actualNameWidth)
-      // 格式化数字
-      const countStr = count.toString().padStart(countWidth)
-      // 格式化时间
-      const timeAgo = utils.formatTimeAgo(lastTime)
-      const truncatedTime = utils.truncateByDisplayWidth(timeAgo, timeWidth)
-      // 组合最终显示字符串
-      return `${truncatedName}${namePadding} ${countStr} ${truncatedTime}`
-    })
+        // 分配字符空间
+        const totalWidth = 25
+        const timeWidth = 10
+        // 格式化数字并添加单位
+        const countLabel = aggregateKey === 'command' ? '次' : '条'
+        const countStr = count.toString() + countLabel
+        const countDisplayWidth = utils.getStringDisplayWidth(countStr)
+        // 动态调整名称宽度
+        const maxNameWidth = totalWidth - countDisplayWidth - 1
+        // 截断名称
+        const truncatedName = utils.truncateByDisplayWidth(displayName, maxNameWidth)
+        const nameDisplayWidth = utils.getStringDisplayWidth(truncatedName)
+        // 计算空格
+        const paddingWidth = totalWidth - nameDisplayWidth - countDisplayWidth
+        const padding = ' '.repeat(paddingWidth)
+        // 格式化时间
+        const timeAgo = utils.formatTimeAgo(lastTime)
+        const truncatedTime = utils.truncateByDisplayWidth(timeAgo, timeWidth)
+        // 组合最终显示字符串
+        return `${truncatedName}${padding}${countStr} ${truncatedTime}`
+      }),
+      page: currentPage,
+      totalPages,
+      totalItems,
+      title: formattedTitle
+    }
   },
 
   /**

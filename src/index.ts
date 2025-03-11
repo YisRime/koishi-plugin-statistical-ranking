@@ -202,33 +202,43 @@ export async function apply(ctx: Context, config: Config) {
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('all', '-a 显示所有记录')
+    .option('page', '-P [page:number] 指定页码', { fallback: 1 })
     .action(async ({options}) => {
       const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
-      const lines = await utils.processStatRecords(result.records, 'command', {
+      const pageSize = 10
+      const processed = await utils.processStatRecords(result.records, 'command', {
         sortBy: 'key',
-        limit: options.all ? undefined : 12,
         disableCommandMerge: options.all,
         displayBlacklist: !options.all && config.enableDisplayFilter ? config.displayBlacklist : undefined,
-        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined
+        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined,
+        page: options.page || 1,
+        pageSize,
+        title: result.title
       })
-      return result.title + '\n\n' + lines.join('\n')
+
+      return processed.title + '\n\n' + processed.items.join('\n')
     })
 
   stat.subcommand('.user', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('all', '-a 显示所有记录')
+    .option('page', '-P [page:number] 指定页码', { fallback: 1 })
     .action(async ({options}) => {
       const result = await utils.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
-      const lines = await utils.processStatRecords(result.records, 'userId', {
+      const pageSize = 10
+      const processed = await utils.processStatRecords(result.records, 'userId', {
         truncateId: true,
-        limit: options.all ? undefined : 12,
         displayBlacklist: !options.all && config.enableDisplayFilter ? config.displayBlacklist : undefined,
-        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined
+        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined,
+        page: options.page || 1,
+        pageSize,
+        title: result.title
       })
-      return result.title + '\n\n' + lines.join('\n')
+
+      return processed.title + '\n\n' + processed.items.join('\n')
     })
 
   stat.subcommand('.guild', '查看群组统计')
@@ -236,16 +246,21 @@ export async function apply(ctx: Context, config: Config) {
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .option('all', '-a 显示所有记录')
+    .option('page', '-P [page:number] 指定页码', { fallback: 1 })
     .action(async ({options}) => {
       const result = await utils.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
-      const lines = await utils.processStatRecords(result.records, 'guildId', {
+      const pageSize = 10
+      const processed = await utils.processStatRecords(result.records, 'guildId', {
         truncateId: true,
-        limit: options.all ? undefined : 12,
         displayBlacklist: !options.all && config.enableDisplayFilter ? config.displayBlacklist : undefined,
-        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined
+        displayWhitelist: !options.all && config.enableDisplayFilter ? config.displayWhitelist : undefined,
+        page: options.page || 1,
+        pageSize,
+        title: result.title
       })
-      return result.title + '\n\n' + lines.join('\n')
+
+      return processed.title + '\n\n' + processed.items.join('\n')
     })
 
   stat.subcommand('.list', '查看类型列表', { authority: 3 })
