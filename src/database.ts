@@ -95,19 +95,21 @@ export const database = {
         userId: data.userId,
         command: data.command ?? null
       }
+      const userName = utils.sanitizeString(data.userName || '')
+      const guildName = utils.sanitizeString(data.guildName || '')
       const existing = await ctx.database.get('analytics.stat', query)
       if (existing.length) {
         await ctx.database.set('analytics.stat', query, {
-          userName: data.userName || existing[0].userName || '',
-          guildName: data.guildName || existing[0].guildName || '',
+          userName: userName || existing[0].userName || '',
+          guildName: guildName || existing[0].guildName || '',
           count: existing[0].count + 1,
           lastTime: new Date()
         })
       } else {
         await ctx.database.create('analytics.stat', {
           ...query,
-          userName: data.userName || '',
-          guildName: data.guildName || '',
+          userName: userName || '',
+          guildName: guildName || '',
           count: 1,
           lastTime: new Date()
         })
@@ -168,8 +170,8 @@ export const database = {
         await ctx.database.set('analytics.stat', query, {
           count: existing.count + record.count,
           lastTime: new Date(Math.max(existing.lastTime?.getTime() || 0, record.lastTime.getTime())),
-          userName: existing.userName || '',
-          guildName: existing.guildName || ''
+          userName: utils.sanitizeString(existing.userName) || '',
+          guildName: utils.sanitizeString(existing.guildName) || ''
         })
       } else {
         await ctx.database.create('analytics.stat', {

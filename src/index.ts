@@ -278,7 +278,7 @@ export async function apply(ctx: Context, config: Config) {
       }
       if (options.user) parts.push(formatList('userId', '用户列表'))
       if (options.guild) parts.push(formatList('guildId', '群组列表'))
-      return parts.filter(Boolean).join('\n\n')
+      return parts.filter(Boolean).join('\n')
     })
 
   if (config.enableClear) {

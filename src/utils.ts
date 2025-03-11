@@ -56,10 +56,10 @@ export const utils = {
    * @description 将时间转换为"X年X月前"等易读格式
    */
   formatTimeAgo(date: Date): string {
-    if (!date?.getTime()) return '未知时间'.padStart(7)
+    if (!date?.getTime()) return '未知时间'
     const diff = Date.now() - date.getTime()
-    if (diff === 0) return '现在'.padStart(7)
-    if (Math.abs(diff) < 10000) return (diff < 0 ? '一会后' : '一会前').padStart(7)
+    if (diff === 0) return '现在'
+    if (Math.abs(diff) < 10000) return (diff < 0 ? '一会后' : '一会前')
     const units = [
       [31536000000, '年'],
       [2592000000, '月'],
@@ -79,11 +79,79 @@ export const utils = {
         const text = subVal > 0
           ? `${mainVal}${mainUnit}${subVal}${subUnit}${suffix}`
           : `${mainVal}${mainUnit}${suffix}`
-        return text.padStart(7)
+        return text
       }
     }
     const minutes = Math.floor(absDiff / 60000)
-    return (minutes > 0 ? `${minutes}分${suffix}` : `一会${suffix}`).padStart(7)
+    return minutes > 0 ? `${minutes}分${suffix}` : `一会${suffix}`
+  },
+
+  /**
+   * 计算字符串的显示宽度
+   * @param str 要计算宽度的字符串
+   * @returns 显示宽度（全角字符算2，半角字符算1）
+   */
+  getStringDisplayWidth(str: string): number {
+    if (!str) return 0
+    return Array.from(str).reduce((width, char) => {
+      const isFullWidth = /[\u3000-\u9fff\uff01-\uff60]/.test(char)
+      return width + (isFullWidth ? 2 : 1)
+    }, 0)
+  },
+
+  /**
+   * 按显示宽度截断字符串
+   * @param str 要截断的字符串
+   * @param maxWidth 最大显示宽度
+   * @returns 截断后的字符串
+   */
+  truncateByDisplayWidth(str: string, maxWidth: number): string {
+    if (!str) return str
+    let width = 0
+    let result = ''
+    for (const char of Array.from(str)) {
+      const charWidth = /[\u3000-\u9fff\uff01-\uff60]/.test(char) ? 2 : 1
+      if (width + charWidth > maxWidth) break
+      width += charWidth
+      result += char
+    }
+    return result
+  },
+
+  /**
+   * 根据显示宽度填充字符串
+   * @param str 要填充的字符串
+   * @param width 目标宽度
+   * @param char 填充字符，默认为空格
+   * @param end 是否右对齐，默认为false（左对齐）
+   * @returns 填充后的字符串
+   */
+  padByDisplayWidth(str: string, width: number, char: string = ' ', end: boolean = false): string {
+    const displayWidth = utils.getStringDisplayWidth(str)
+    const padLength = Math.max(0, width - displayWidth)
+    const padding = char.repeat(padLength)
+    return end ? str + padding : padding + str
+  },
+
+  /**
+   * 安全处理字符串，防止SQL注入和特殊昵称
+   * @param input 输入字符串
+   * @returns 处理后的安全字符串
+   */
+  sanitizeString(input: string): string {
+    if (!input) return ''
+    // 移除SQL注入并替换
+    const sqlKeywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'SELECT', 'UNION', 'CREATE', 'ALTER']
+    let result = input
+    for (const keyword of sqlKeywords) {
+      const regex = new RegExp(`\\b${keyword}\\b`, 'gi')
+      result = result.replace(regex, `${keyword.charAt(0)}*${keyword.charAt(keyword.length-1)}`)
+    }
+    // 移除特殊字符与控制字符
+    result = result.replace(/[;'"\\=]/g, '*')
+    result = result.replace(/[\x00-\x1F\x7F]/g, '')
+    // 限制长度
+    return result.slice(0, 64)
   },
 
   async processStatRecords(
@@ -140,13 +208,31 @@ export const utils = {
       : entries
     return limitedEntries.map(([key, {count, lastTime}]) => {
       let displayName = nameMap.get(key) || key
+      // 处理显示名称
       if (truncateId) {
-        displayName = displayName.length > 15 ? displayName.slice(0, 15) : displayName
-        if (!nameMap.has(key)) {
-          displayName = key.slice(0, 15)
+        if (nameMap.has(key)) {
+          displayName = displayName || key
+        } else {
+          displayName = key
         }
       }
-      return `${displayName.padEnd(16)}${count.toString().padStart(5)}次 ${utils.formatTimeAgo(lastTime)}`
+      // 分配字符空间
+      const maxNameWidth = 14
+      const countWidth = 6
+      const timeWidth = 10
+      // 截断名称
+      const truncatedName = utils.truncateByDisplayWidth(displayName, maxNameWidth)
+      // 计算名称实际宽度
+      const actualNameWidth = utils.getStringDisplayWidth(truncatedName)
+      // 计算填充的空格
+      const namePadding = ' '.repeat(maxNameWidth - actualNameWidth)
+      // 格式化数字
+      const countStr = count.toString().padStart(countWidth)
+      // 格式化时间
+      const timeAgo = utils.formatTimeAgo(lastTime)
+      const truncatedTime = utils.truncateByDisplayWidth(timeAgo, timeWidth)
+      // 组合最终显示字符串
+      return `${truncatedName}${namePadding} ${countStr} ${truncatedTime}`
     })
   },
 
@@ -199,12 +285,14 @@ export const utils = {
     const guildId = session.guildId || session.groupId || session.channelId
     const userId = await utils.getPlatformId(session)
     const bot = session.bot
-    const userName = session.username ?? (bot?.getGuildMember
+    let userName = session.username ?? (bot?.getGuildMember
       ? (await bot.getGuildMember(guildId, userId).catch(() => null))?.username
       : '') ?? ''
-    const guildName = guildId === 'private'
+    userName = utils.sanitizeString(userName)
+    let guildName = guildId === 'private'
       ? ''
       : (await bot?.getGuild?.(guildId).catch(() => null))?.name ?? ''
+    guildName = utils.sanitizeString(guildName)
     return {
       platform,
       guildId,
