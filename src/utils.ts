@@ -98,7 +98,8 @@ export const utils = {
   getStringDisplayWidth(str: string): number {
     if (!str) return 0
     return Array.from(str).reduce((width, char) => {
-      const isFullWidth = /[\u3000-\u9fff\uff01-\uff60]/.test(char)
+      const isFullWidth = /[\u3000-\u9fff\uff01-\uff60\u2E80-\u2FDF\u3040-\u30FF]/.test(char) ||
+                         /[\u2600-\u26FF\u2700-\u27BF\u2B00-\u2BFF\u2000-\u206F]/.test(char);
       return width + (isFullWidth ? 2 : 1)
     }, 0)
   },
@@ -114,7 +115,9 @@ export const utils = {
     let width = 0
     let result = ''
     for (const char of Array.from(str)) {
-      const charWidth = /[\u3000-\u9fff\uff01-\uff60]/.test(char) ? 2 : 1
+      const isFullWidth = /[\u3000-\u9fff\uff01-\uff60\u2E80-\u2FDF\u3040-\u30FF]/.test(char) ||
+                         /[\u2600-\u26FF\u2700-\u27BF\u2B00-\u2BFF\u2000-\u206F]/.test(char);
+      const charWidth = isFullWidth ? 2 : 1
       if (width + charWidth > maxWidth) break
       width += charWidth
       result += char
@@ -229,11 +232,6 @@ export const utils = {
       formattedTitle = `${title.endsWith(' ——') ? title.substring(0, title.length - 3) : title}（第${currentPage}/${totalPages}页）——`
     }
 
-    // 定义固定宽度
-    const totalWidth = 36    // 总宽度
-    const countWidth = 8     // 为计数预留的宽度
-    const timeWidth = 10     // 为时间预留的宽度
-    const nameWidth = totalWidth - countWidth - timeWidth - 2  // 为名称预留的宽度
     // 预处理所有数据，获取显示信息
     const displayItems = pagedEntries.map(([key, {count, lastTime}]) => {
       let displayName = nameMap.get(key) || key
@@ -258,22 +256,42 @@ export const utils = {
       }
     })
 
+    // 定义总宽度和最小宽度约束
+    const totalWidth = 35                // 总宽度
+    const minCountWidth = 6              // 计数最小宽度
+    const minTimeWidth = 9               // 时间最小宽度
+    const minNameWidth = 6              // 名称最小宽度
+    const maxNameWidth = 20              // 名称最大宽度
+    // 动态计算名称宽度
+    let maxNameDisplayWidth = minNameWidth
+    // 1. 计算所有项目的实际名称显示宽度
+    for (const item of displayItems) {
+      const nameWidth = utils.getStringDisplayWidth(item.displayName);
+      maxNameDisplayWidth = Math.max(maxNameDisplayWidth, Math.min(maxNameWidth, nameWidth));
+    }
+    // 2. 根据名称宽度动态分配其他部分的宽度
+    const nameWidth = maxNameDisplayWidth + 2;
+    // 3. 计算剩余空间，分配给计数和时间
+    let remainingWidth = totalWidth - nameWidth - 2;
+    // 4. 分配计数和时间宽度，确保它们达到最小宽度
+    const countWidth = Math.max(minCountWidth,
+      Math.min(remainingWidth - minTimeWidth, 8));
+    const timeWidth = Math.max(minTimeWidth,
+      remainingWidth - countWidth);
     return {
       items: displayItems.map(item => {
-        // 截断名称到固定宽度
-        const truncatedName = utils.truncateByDisplayWidth(item.displayName, nameWidth)
-        // 截断计数部分确保不超出宽度
-        const truncatedCount = utils.truncateByDisplayWidth(item.countStr, countWidth)
-        // 截断时间部分确保不超出宽度
-        const truncatedTime = utils.truncateByDisplayWidth(item.timeAgo, timeWidth)
-        // 计算名称部分的右侧填充
-        const nameDisplayWidth = utils.getStringDisplayWidth(truncatedName)
-        const namePadding = ' '.repeat(Math.max(0, nameWidth - nameDisplayWidth))
-        // 计算计数部分的右侧填充
-        const countDisplayWidth = utils.getStringDisplayWidth(truncatedCount)
-        const countPadding = ' '.repeat(Math.max(0, countWidth - countDisplayWidth))
-        // 组合最终显示字符串，保证对齐
-        return `${truncatedName}${namePadding} ${truncatedCount}${countPadding} ${truncatedTime}`
+        // 截断名称到计算出的动态宽度
+        const truncatedName = utils.truncateByDisplayWidth(item.displayName, nameWidth);
+        // 截断计数和时间
+        const truncatedCount = utils.truncateByDisplayWidth(item.countStr, countWidth);
+        const truncatedTime = utils.truncateByDisplayWidth(item.timeAgo, timeWidth);
+        // 计算填充
+        const nameDisplayWidth = utils.getStringDisplayWidth(truncatedName);
+        const namePadding = ' '.repeat(Math.max(0, nameWidth - nameDisplayWidth));
+        const countDisplayWidth = utils.getStringDisplayWidth(truncatedCount);
+        const countPadding = ' '.repeat(Math.max(0, countWidth - countDisplayWidth));
+        // 组合最终显示字符串，确保计数右对齐
+        return `${truncatedName}${namePadding} ${countPadding}${truncatedCount} ${truncatedTime}`;
       }),
       page: currentPage,
       totalPages,
