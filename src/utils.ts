@@ -255,32 +255,12 @@ export const utils = {
         timeAgo
       }
     })
-
-    // 定义总宽度和最小宽度约束
-    const totalWidth = 35                // 总宽度
-    const minCountWidth = 6              // 计数最小宽度
-    const minTimeWidth = 9               // 时间最小宽度
-    const minNameWidth = 6              // 名称最小宽度
-    const maxNameWidth = 20              // 名称最大宽度
-    // 动态计算名称宽度
-    let maxNameDisplayWidth = minNameWidth
-    // 1. 计算所有项目的实际名称显示宽度
-    for (const item of displayItems) {
-      const nameWidth = utils.getStringDisplayWidth(item.displayName);
-      maxNameDisplayWidth = Math.max(maxNameDisplayWidth, Math.min(maxNameWidth, nameWidth));
-    }
-    // 2. 根据名称宽度动态分配其他部分的宽度
-    const nameWidth = maxNameDisplayWidth + 2;
-    // 3. 计算剩余空间，分配给计数和时间
-    let remainingWidth = totalWidth - nameWidth - 2;
-    // 4. 分配计数和时间宽度，确保它们达到最小宽度
-    const countWidth = Math.max(minCountWidth,
-      Math.min(remainingWidth - minTimeWidth, 8));
-    const timeWidth = Math.max(minTimeWidth,
-      remainingWidth - countWidth);
+    const countWidth = 6               // 计数固定宽度
+    const timeWidth = 10              // 时间固定宽度
+    const nameWidth = 18              // 名称固定宽度
     return {
       items: displayItems.map(item => {
-        // 截断名称到计算出的动态宽度
+        // 截断名称到固定宽度
         const truncatedName = utils.truncateByDisplayWidth(item.displayName, nameWidth);
         // 截断计数和时间
         const truncatedCount = utils.truncateByDisplayWidth(item.countStr, countWidth);
