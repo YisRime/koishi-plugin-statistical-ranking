@@ -26,10 +26,10 @@ export const database = {
    */
   initialize(ctx: Context) {
     ctx.model.extend('analytics.stat', {
-      platform: 'string',
-      guildId: 'string',
-      userId: 'string',
-      command: { type: 'string', nullable: true },
+      platform: { type: 'string', length: 60 },
+      guildId: { type: 'string', length: 150 },
+      userId: { type: 'string', length: 150 },
+      command: { type: 'string', length: 150, nullable: true },
       guildName: { type: 'string', nullable: true },
       userName: { type: 'string', nullable: true },
       count: 'unsigned',
