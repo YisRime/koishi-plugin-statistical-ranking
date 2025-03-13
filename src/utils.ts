@@ -146,7 +146,9 @@ export const utils = {
    * @returns 处理后的安全字符串
    */
   sanitizeString(input: string): string {
-    if (!input) return ''
+    // 改进: 处理undefined和null输入
+    if (input === undefined || input === null) return ''
+
     // 移除SQL注入并替换
     const sqlKeywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'SELECT', 'UNION', 'CREATE', 'ALTER']
     let result = input

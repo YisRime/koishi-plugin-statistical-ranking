@@ -197,6 +197,7 @@ export async function apply(ctx: Context, config: Config) {
       }
     }
 
+    // 将 null/undefined 命令正确转换为 __message__
     const commandValue = command || '__message__'
     await database.saveRecord(ctx, { ...info, command: commandValue })
   }
@@ -383,13 +384,21 @@ export async function apply(ctx: Context, config: Config) {
       .action(async ({ options }) => {
         try {
           if (options.local) {
-            await database.importFromFile(ctx, options.local, options.force)
-            return `从文件导入完成`
+            const result = await database.importFromFile(ctx, options.local, options.force)
+            return `${result}`
           } else {
-            await database.importLegacyData(ctx, options.force)
-            return '从历史数据表导入完成'
+            try {
+              const result = await database.importLegacyData(ctx, options.force)
+              return `${result}`
+            } catch (e) {
+              if (e.message.includes('找不到历史数据表')) {
+                return '历史数据表不存在，请使用 -l 参数指定要导入的文件'
+              }
+              throw e
+            }
           }
         } catch (e) {
+          ctx.logger.error(`导入失败: ${e.message}`, e.stack)
           return `导入失败：${e.message}`
         }
       })
