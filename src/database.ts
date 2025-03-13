@@ -51,6 +51,9 @@ export const database = {
       return
     }
     data.command = data.command === null ? '' : (data.command || '')
+    data.userName = data.userName === null ? '' : (data.userName || '')
+    data.guildName = data.guildName === null ? '' : (data.guildName || '')
+
     const target = {
       platform: data.platform,
       guildId: data.guildId,
