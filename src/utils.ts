@@ -356,12 +356,19 @@ export const utils = {
     if (options.guild) query.guildId = options.guild
     if (options.platform) query.platform = options.platform
     if (type === 'user') {
-      query.command = null
+      query.command = { $in: [null, ''] }
     }
     else if (type === 'command') {
-      query.command = options.command || { $not: [null, ''] }
+      if (options.command) {
+        query.command = options.command
+      } else {
+        query.command = { $not: [null, ''] }
+      }
     }
-    else if (options.command) query.command = options.command
+    else if (options.command) {
+      query.command = options.command
+    }
+
     const records = await ctx.database.get('analytics.stat', query)
     if (!records?.length) return '未找到记录'
     const conditions = Object.entries({
