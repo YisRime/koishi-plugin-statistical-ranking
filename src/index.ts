@@ -191,7 +191,8 @@ export async function apply(ctx: Context, config: Config) {
         }
       }
     }
-    await database.saveRecord(ctx, { ...info, command })
+    const commandValue = command === null ? '' : (command || '')
+    await database.saveRecord(ctx, { ...info, command: commandValue })
   }
 
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))

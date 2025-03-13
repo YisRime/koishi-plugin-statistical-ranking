@@ -25,19 +25,19 @@ export const database = {
    * @description 创建并定义 analytics.stat 表的结构
    */
   initialize(ctx: Context) {
-    ctx.model.extend('analytics.stat', {
-      platform: { type: 'string', length: 60 },
-      guildId: { type: 'string', length: 150 },
-      userId: { type: 'string', length: 150 },
-      command: { type: 'string', length: 150, nullable: true },
-      guildName: { type: 'string', nullable: true },
-      userName: { type: 'string', nullable: true },
-      count: 'unsigned',
-      lastTime: 'timestamp',
-    }, {
-      primary: ['platform', 'guildId', 'userId', 'command'],
-    })
-  },
+          ctx.model.extend('analytics.stat', {
+        platform: { type: 'string', length: 60 },
+        guildId: { type: 'string', length: 150 },
+        userId: { type: 'string', length: 150 },
+        command: { type: 'string', length: 150, nullable: true },
+        guildName: { type: 'string', nullable: true },
+        userName: { type: 'string', nullable: true },
+        count: 'unsigned',
+        lastTime: 'timestamp',
+      }, {
+        primary: ['platform', 'guildId', 'userId', 'command'],
+      })
+      },
 
   /**
    * 保存统计记录
@@ -50,6 +50,7 @@ export const database = {
       ctx.logger.warn('Invalid record data:', data)
       return
     }
+    data.command = data.command === null ? '' : (data.command || '')
     const target = {
       platform: data.platform,
       guildId: data.guildId,
@@ -89,11 +90,12 @@ export const database = {
    */
   async upsertRecord(ctx: Context, data: Partial<StatRecord>) {
     try {
+      const commandValue = data.command === null ? '' : (data.command || '')
       const query = {
         platform: data.platform,
         guildId: data.guildId,
         userId: data.userId,
-        command: data.command ?? null
+        command: commandValue
       }
       const userName = utils.sanitizeString(data.userName || '')
       const guildName = utils.sanitizeString(data.guildName || '')
