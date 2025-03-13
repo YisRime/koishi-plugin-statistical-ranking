@@ -355,8 +355,12 @@ export const utils = {
     if (options.user) query.userId = options.user
     if (options.guild) query.guildId = options.guild
     if (options.platform) query.platform = options.platform
-    if (type === 'user') query.command = null
-    else if (type === 'command') query.command = options.command || { $not: null }
+    if (type === 'user') {
+      query.command = null
+    }
+    else if (type === 'command') {
+      query.command = options.command || { $not: [null, ''] }
+    }
     else if (options.command) query.command = options.command
     const records = await ctx.database.get('analytics.stat', query)
     if (!records?.length) return '未找到记录'

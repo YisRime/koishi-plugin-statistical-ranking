@@ -50,7 +50,7 @@ export const database = {
       ctx.logger.warn('Invalid record data:', data)
       return
     }
-    data.command = data.command === null ? '' : (data.command || '')
+    data.command = (data.command === null || data.command === '') ? '' : data.command
     data.userName = data.userName === null ? '' : (data.userName || '')
     data.guildName = data.guildName === null ? '' : (data.guildName || '')
 
@@ -93,7 +93,7 @@ export const database = {
    */
   async upsertRecord(ctx: Context, data: Partial<StatRecord>) {
     try {
-      const commandValue = data.command === null ? '' : (data.command || '')
+      const commandValue = (data.command === null || data.command === '') ? '' : data.command
       const query = {
         platform: data.platform,
         guildId: data.guildId,

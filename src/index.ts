@@ -191,7 +191,7 @@ export async function apply(ctx: Context, config: Config) {
         }
       }
     }
-    const commandValue = command === null ? '' : (command || '')
+    const commandValue = command === null || command === '' ? null : command
     await database.saveRecord(ctx, { ...info, command: commandValue })
   }
 
