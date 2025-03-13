@@ -27,19 +27,22 @@ export const database = {
    * @description 创建并定义 analytics.stat 表的结构
    */
   initialize(ctx: Context) {
-          ctx.model.extend('analytics.stat', {
-        platform: { type: 'string', length: 60 },
-        guildId: { type: 'string', length: 150 },
-        userId: { type: 'string', length: 150 },
-        command: { type: 'string', length: 150, nullable: true },
-        guildName: { type: 'string', nullable: true },
-        userName: { type: 'string', nullable: true },
-        count: 'unsigned',
-        lastTime: 'timestamp',
-      }, {
-        primary: ['platform', 'guildId', 'userId', 'command'],
-      })
-      },
+    ctx.model.extend('analytics.stat', {
+      id: 'unsigned',
+      platform: { type: 'string', length: 60 },
+      guildId: { type: 'string', length: 150 },
+      userId: { type: 'string', length: 150 },
+      command: { type: 'string', length: 150 },
+      guildName: { type: 'string', nullable: true },
+      userName: { type: 'string', nullable: true },
+      count: 'unsigned',
+      lastTime: 'timestamp',
+    }, {
+      primary: 'id',
+      autoInc: true,
+      unique: [['platform', 'guildId', 'userId', 'command']],
+    })
+  },
 
   /**
    * 保存统计记录
@@ -52,9 +55,10 @@ export const database = {
       ctx.logger.warn('Invalid record data:', data)
       return
     }
-    data.command = (data.command === null || data.command === '') ? '' : data.command
-    data.userName = data.userName === null ? '' : (data.userName || '')
-    data.guildName = data.guildName === null ? '' : (data.guildName || '')
+
+    if (!data.command) {
+      data.command = '__message__'
+    }
 
     const target = {
       platform: data.platform,
@@ -95,28 +99,36 @@ export const database = {
    */
   async upsertRecord(ctx: Context, data: Partial<StatRecord>) {
     try {
-      const commandValue = (data.command === null || data.command === '') ? '' : data.command
+      const commandValue = data.command || '__message__'
       const query = {
         platform: data.platform,
         guildId: data.guildId,
         userId: data.userId,
         command: commandValue
       }
-      const userName = utils.sanitizeString(data.userName || '')
-      const guildName = utils.sanitizeString(data.guildName || '')
+
+      const userName = data.userName !== undefined ? utils.sanitizeString(data.userName) : undefined
+      const guildName = data.guildName !== undefined ? utils.sanitizeString(data.guildName) : undefined
+
       const existing = await ctx.database.get('analytics.stat', query)
       if (existing.length) {
-        await ctx.database.set('analytics.stat', query, {
-          userName: userName || existing[0].userName || '',
-          guildName: guildName || existing[0].guildName || '',
+        // 更新现有记录
+        const updateData: any = {
           count: existing[0].count + 1,
           lastTime: new Date()
-        })
+        }
+
+        // 只在有新值时更新用户名和群组名
+        if (userName !== undefined) updateData.userName = userName
+        if (guildName !== undefined) updateData.guildName = guildName
+
+        await ctx.database.set('analytics.stat', query, updateData)
       } else {
+        // 创建新记录
         await ctx.database.create('analytics.stat', {
           ...query,
-          userName: userName || '',
-          guildName: guildName || '',
+          userName,
+          guildName,
           count: 1,
           lastTime: new Date()
         })
@@ -148,14 +160,14 @@ export const database = {
     records.forEach(cmd => {
       const binding = userIdMap.get(cmd.userId?.toString())
       if (!binding || !cmd.channelId) return
-      const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${cmd.name || ''}`
+      const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${cmd.name || '__message__'}`
       const timestamp = new Date((cmd.date * 86400000) + ((cmd.hour || 0) * 3600000))
       if (isNaN(timestamp.getTime())) return
       const curr = mergedRecords.get(key) || {
         platform: binding.platform,
         guildId: cmd.channelId,
         userId: binding.pid,
-        command: cmd.name || null,
+        command: cmd.name || '__message__',
         count: 0,
         lastTime: timestamp
       }
@@ -230,28 +242,19 @@ export const database = {
     platform?: string
     guildId?: string
     command?: string
-    pretty?: boolean
     format?: 'json' | 'csv'
   }) {
     // 构建查询条件
     const query: any = {}
     for (const [key, value] of Object.entries(options)) {
-      if (value && !['pretty', 'format'].includes(key)) query[key] = value
+      if (value && key !== 'format') query[key] = value
     }
-
     // 查询数据
     const records = await ctx.database.get('analytics.stat', query)
     if (!records.length) {
       throw new Error('没有找到匹配的记录')
     }
-
-    // 确保data目录存在
     const dataDir = path.join(process.cwd(), 'data')
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true })
-    }
-
-    // 使用固定的文件名
     const format = options.format || 'json'
     const outputFilename = `${filename}.${format}`
     const filePath = path.join(dataDir, outputFilename)
@@ -260,13 +263,13 @@ export const database = {
       if (format === 'csv') {
         // CSV 格式导出
         const headers = ['platform', 'guildId', 'userId', 'command', 'userName', 'guildName', 'count', 'lastTime']
+        // 过滤id字段
         const csvContent = [
-          headers.join(','), // 表头
+          headers.join(','),
           ...records.map(record => headers.map(header => {
             const value = record[header]
             if (value === null || value === undefined) return ''
             if (header === 'lastTime') return new Date(value).toISOString()
-            // 确保字符串中的逗号不会破坏CSV格式
             return typeof value === 'string'
               ? `"${value.replace(/"/g, '""')}"`
               : String(value)
@@ -276,9 +279,11 @@ export const database = {
         fs.writeFileSync(filePath, csvContent, 'utf-8')
       } else {
         // JSON 格式导出
-        const fileContent = options.pretty
-          ? JSON.stringify(records, null, 2)
-          : JSON.stringify(records)
+        const exportRecords = records.map(record => {
+          const { id, ...rest } = record
+          return rest
+        })
+        const fileContent = JSON.stringify(exportRecords, null, 2)
         fs.writeFileSync(filePath, fileContent, 'utf-8')
       }
 
@@ -302,10 +307,7 @@ export const database = {
    */
   async importFromFile(ctx: Context, filename: string, overwrite = false) {
     try {
-      // 在 data 目录下查找文件
       const dataDir = path.join(process.cwd(), 'data')
-
-      // 如果未指定扩展名，尝试添加
       if (!path.extname(filename)) {
         // 首先尝试json格式
         if (fs.existsSync(path.join(dataDir, `${filename}.json`))) {
@@ -321,26 +323,49 @@ export const database = {
       if (!fs.existsSync(actualPath)) {
         throw new Error(`文件 ${actualPath} 不存在`)
       }
-
       // 读取文件内容
       const fileContent = fs.readFileSync(actualPath, 'utf-8')
       let records: StatRecord[] = []
-
       // 根据文件扩展名判断格式
       const ext = path.extname(filename).toLowerCase()
-
       if (ext === '.csv') {
-        // CSV解析简化处理
+        // CSV解析
         const lines = fileContent.trim().split('\n')
         if (lines.length < 2) throw new Error('CSV文件格式不正确')
-
         const headers = lines[0].split(',')
         records = lines.slice(1).map(line => {
-          // 简单CSV解析，不处理引号内逗号的情况
-          const values = line.split(',')
-          const record: any = {}
+          // 处理引号内的逗号
+          const values = []
+          let inQuotes = false
+          let currentValue = ''
 
+          for (let i = 0; i < line.length; i++) {
+            const char = line[i]
+            if (char === '"') {
+              if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+                // 处理双引号转义 ("") -> (")
+                currentValue += '"'
+                i++
+              } else {
+                // 切换引号状态
+                inQuotes = !inQuotes
+              }
+            } else if (char === ',' && !inQuotes) {
+              // 找到分隔符且不在引号内
+              values.push(currentValue)
+              currentValue = ''
+            } else {
+              // 普通字符
+              currentValue += char
+            }
+          }
+          // 添加最后一个值
+          values.push(currentValue)
+          // 构建记录对象
+          const record: any = {}
           headers.forEach((header, index) => {
+            if (header === 'id') return
+
             const value = values[index] || ''
             if (header === 'count') {
               record[header] = parseInt(value) || 0
@@ -355,57 +380,98 @@ export const database = {
         })
       } else {
         // JSON格式解析
-        records = JSON.parse(fileContent)
-        if (!Array.isArray(records)) {
+        const parsedData = JSON.parse(fileContent)
+        if (!Array.isArray(parsedData)) {
           throw new Error('文件内容不是有效的记录数组')
         }
+        // 跳过id字段
+        records = parsedData.map(record => {
+          const { id, ...rest } = record
+          return rest
+        })
       }
 
       // 如果覆盖模式，先清除现有数据
       if (overwrite) {
         await ctx.database.remove('analytics.stat', {})
+        ctx.logger.info(`已清除现有统计数据`)
       }
 
-      // 简化批量导入
       let importedCount = 0
-      await Promise.all(records.map(async record => {
-        if (!record.platform || !record.guildId || !record.userId) return
+      let skippedCount = 0
 
-        const query = {
-          platform: record.platform,
-          guildId: record.guildId,
-          userId: record.userId,
-          command: record.command || ''
-        }
+      const batchSize = 100
+      const batches = []
+      for (let i = 0; i < records.length; i += batchSize) {
+        batches.push(records.slice(i, i + batchSize))
+      }
 
-        try {
-          // 检查记录是否已存在
-          const existing = await ctx.database.get('analytics.stat', query)
-          if (existing.length && !overwrite) {
-            // 更新现有记录
-            await ctx.database.set('analytics.stat', query, {
-              count: existing[0].count + (record.count || 1),
-              lastTime: new Date(Math.max(existing[0].lastTime?.getTime() || 0, record.lastTime?.getTime() || Date.now())),
-              userName: utils.sanitizeString(record.userName || existing[0].userName || ''),
-              guildName: utils.sanitizeString(record.guildName || existing[0].guildName || '')
-            })
-          } else {
-            // 创建新记录
-            await ctx.database.create('analytics.stat', {
-              ...query,
-              count: record.count || 1,
-              lastTime: new Date(record.lastTime || Date.now()),
-              userName: utils.sanitizeString(record.userName || ''),
-              guildName: utils.sanitizeString(record.guildName || '')
-            })
+      for (const batch of batches) {
+        await Promise.all(batch.map(async record => {
+          if (!record.platform || !record.guildId || !record.userId) {
+            skippedCount++
+            return
           }
-          importedCount++
-        } catch (e) {
-          ctx.logger.warn(`导入记录失败: ${e.message}`, record)
-        }
-      }))
 
-      return `成功导入 ${importedCount} 条记录`
+          if (!record.command) {
+            record.command = '__message__'
+          }
+
+          // 复合键查询条件
+          const query = {
+            platform: record.platform,
+            guildId: record.guildId,
+            userId: record.userId,
+            command: record.command
+          }
+
+          try {
+            // 检查记录是否已存在
+            const existing = await ctx.database.get('analytics.stat', query)
+            if (existing.length && !overwrite) {
+              // 更新现有记录
+              const updateData: any = {
+                count: existing[0].count + (record.count || 1),
+                lastTime: new Date(Math.max(existing[0].lastTime?.getTime() || 0, record.lastTime?.getTime() || Date.now())),
+              }
+
+              if (record.userName !== undefined) {
+                updateData.userName = utils.sanitizeString(record.userName)
+              }
+              if (record.guildName !== undefined) {
+                updateData.guildName = utils.sanitizeString(record.guildName)
+              }
+
+              await ctx.database.set('analytics.stat', query, updateData)
+            } else {
+
+              const newRecord: any = {
+                platform: record.platform,
+                guildId: record.guildId,
+                userId: record.userId,
+                command: record.command,
+                count: record.count || 1,
+                lastTime: new Date(record.lastTime || Date.now()),
+              }
+
+              if (record.userName !== undefined) {
+                newRecord.userName = utils.sanitizeString(record.userName)
+              }
+              if (record.guildName !== undefined) {
+                newRecord.guildName = utils.sanitizeString(record.guildName)
+              }
+
+              await ctx.database.create('analytics.stat', newRecord)
+            }
+            importedCount++
+          } catch (e) {
+            ctx.logger.warn(`导入记录失败: ${e.message}`, record)
+            skippedCount++
+          }
+        }))
+      }
+
+      return `成功导入 ${importedCount} 条记录${skippedCount > 0 ? `，跳过 ${skippedCount} 条无效记录` : ''}`
     } catch (e) {
       throw new Error(`导入失败: ${e.message}`)
     }

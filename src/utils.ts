@@ -356,16 +356,18 @@ export const utils = {
     if (options.guild) query.guildId = options.guild
     if (options.platform) query.platform = options.platform
     if (type === 'user') {
-      query.command = { $in: [null, ''] }
-    }
-    else if (type === 'command') {
+      // 用户发言统计只查询普通消息
+      query.command = '__message__'
+    } else if (type === 'command') {
       if (options.command) {
+        // 指定了命令，直接查询该命令
         query.command = options.command
       } else {
-        query.command = { $not: [null, ''] }
+        // 没指定命令，则排除普通消息
+        query.command = { $neq: '__message__' }
       }
-    }
-    else if (options.command) {
+    } else if (options.command) {
+      // 群组统计且指定了命令
       query.command = options.command
     }
 
