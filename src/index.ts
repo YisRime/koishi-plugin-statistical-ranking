@@ -151,6 +151,17 @@ interface BindingRecord {
 }
 
 /**
+ * 卸载插件时的清理函数
+ * @param ctx - Koishi应用上下文
+ * @description 删除插件创建的数据库表
+ */
+export async function dispose(ctx: Context) {
+  if (ctx.database?.tables?.['analytics.stat']) {
+    await ctx.database.drop('analytics.stat')
+  }
+}
+
+/**
  * 插件主函数
  * @public
  *
