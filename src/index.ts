@@ -1,6 +1,7 @@
 import { Context, Schema } from 'koishi'
 import { database } from './database'
 import { utils } from './utils'
+import * as path from 'path'
 
 /**
  * @packageDocumentation
@@ -25,6 +26,7 @@ export const inject = ['database']
  * @property {boolean} [enableDisplayFilter] - 是否启用显示过滤功能
  * @property {string[]} [displayBlacklist] - 显示过滤黑名单
  * @property {string[]} [displayWhitelist] - 显示过滤白名单
+ * @property {boolean} [enableExport] - 是否启用导出功能
  */
 export interface Config {
   enableImport?: boolean
@@ -35,6 +37,7 @@ export interface Config {
   enableDisplayFilter?: boolean
   displayBlacklist?: string[]
   displayWhitelist?: string[]
+  enableExport?: boolean
 }
 
 /**
@@ -44,6 +47,7 @@ export interface Config {
 export const Config = Schema.intersect([
   Schema.object({
     enableImport: Schema.boolean().default(false).description('启用统计数据导入命令'),
+    enableExport: Schema.boolean().default(false).description('启用统计数据导出命令'),
     enableClear: Schema.boolean().default(false).description('启用统计数据清除命令'),
     enableFilter: Schema.boolean().default(false).description('启用记录过滤功能'),
     enableDisplayFilter: Schema.boolean().default(false).description('启用显示过滤功能'),
@@ -345,13 +349,46 @@ export async function apply(ctx: Context, config: Config) {
           : '已删除所有统计记录'
       })
   }
+
+  if (config.enableExport) {
+    stat.subcommand('.export', '导出统计数据', { authority: 4 })
+      .option('csv', '-C 使用CSV格式导出')
+      .option('pretty', '-P 使用美化格式导出')
+      .option('user', '-u [user:string] 指定用户')
+      .option('platform', '-p [platform:string] 指定平台')
+      .option('guild', '-g [guild:string] 指定群组')
+      .option('cmd', '-c [command:string] 指定命令')
+      .action(async ({ options }) => {
+        try {
+          const format = options.csv ? 'csv' : 'json'
+          const result = await database.exportToFile(ctx, 'stat-export', {
+            userId: options.user,
+            platform: options.platform,
+            guildId: options.guild,
+            command: options.cmd,
+            pretty: options.pretty,
+            format
+          })
+          return `成功导出 ${result.count} 条记录到 data/${result.filename} (${result.format.toUpperCase()}格式)`
+        } catch (e) {
+          return `导出失败：${e.message}`
+        }
+      })
+  }
+
   if (config.enableImport) {
     stat.subcommand('.import', '导入统计数据', { authority: 4 })
       .option('force', '-f 覆盖现有数据')
+      .option('local', '-l [file:string] 从本地文件导入数据')
       .action(async ({ options }) => {
         try {
-          await database.importLegacyData(ctx, options.force)
-          return '导入完成'
+          if (options.local) {
+            await database.importFromFile(ctx, options.local, options.force)
+            return `从文件导入完成`
+          } else {
+            await database.importLegacyData(ctx, options.force)
+            return '从历史数据表导入完成'
+          }
         } catch (e) {
           return `导入失败：${e.message}`
         }
