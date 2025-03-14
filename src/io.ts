@@ -67,12 +67,39 @@ export const io = {
       const filePath = path.join(dataDir, filename)
       if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filename}`)
 
-      const fileContent = fs.readFileSync(filePath, 'utf-8')
-      const records = this._parseJSON(fileContent)
+      // 获取文件大小
+      const stats = fs.statSync(filePath)
+      const fileSizeMB = stats.size / (1024 * 1024)
+      ctx.logger.info(`导入文件大小: ${fileSizeMB.toFixed(2)}MB`)
+
+      let fileContent: string
+      try {
+        // 使用异步读取替代同步读取，更适合大文件
+        fileContent = await fs.promises.readFile(filePath, { encoding: 'utf-8' })
+
+        // 确保文件内容完整
+        if (!fileContent || fileContent.trim() === '') {
+          throw new Error('文件内容为空')
+        }
+
+        if (!fileContent.endsWith(']') && fileContent.startsWith('[')) {
+          throw new Error('JSON文件不完整，可能被截断')
+        }
+      } catch (err) {
+        throw new Error(`读取文件失败: ${err.message}`)
+      }
+
+      let records
+      try {
+        records = this._parseJSON(fileContent)
+      } catch (err) {
+        throw new Error(`解析JSON失败: ${err.message}`)
+      }
 
       // 如果覆盖模式，先清除数据
       if (overwrite) await ctx.database.remove('analytics.stat', {})
 
+      // 分批处理导入，避免一次处理过多数据导致内存问题
       const result = await this._importRecords(ctx, records)
       return `成功导入 ${result.imported} 条记录${result.skipped ? `，跳过 ${result.skipped} 条无效记录` : ''}${result.errors ? `，${result.errors} 条导入失败` : ''}`
     } catch (e) {
@@ -146,27 +173,39 @@ export const io = {
 
   // 辅助方法: 解析JSON
   _parseJSON(content: string): StatRecord[] {
-    const data = JSON.parse(content)
-    if (!Array.isArray(data)) throw new Error('JSON文件必须包含记录数组')
+    try {
+      const data = JSON.parse(content)
+      if (!Array.isArray(data)) throw new Error('JSON文件必须包含记录数组')
 
-    return data.map(({ id, ...rest }) => ({
-      ...rest,
-      userName: rest.userName ?? '',
-      guildName: rest.guildName ?? '',
-      // 直接使用原始 command 值，不再设置默认值
-      command: rest.command ?? '',
-      count: parseInt(String(rest.count)) || 1,
-      lastTime: rest.lastTime ? new Date(rest.lastTime) : new Date()
-    })) as StatRecord[]
+      return data.map(({ id, ...rest }) => ({
+        ...rest,
+        userName: rest.userName ?? '',
+        guildName: rest.guildName ?? '',
+        command: rest.command ?? '',
+        count: parseInt(String(rest.count)) || 1,
+        lastTime: rest.lastTime ? new Date(rest.lastTime) : new Date()
+      })) as StatRecord[]
+    } catch (error) {
+      throw new Error(`JSON解析错误: ${error.message}`)
+    }
   },
 
   // 辅助方法: 导入记录
   async _importRecords(ctx: Context, records: StatRecord[]) {
     let imported = 0, skipped = 0, errors = 0
+    const totalRecords = records.length
 
+    ctx.logger.info(`开始导入 ${totalRecords} 条记录`)
+
+    // 增加批处理大小，使处理更高效
     const batchSize = 100
+
     for (let i = 0; i < records.length; i += batchSize) {
       const batch = records.slice(i, i + batchSize)
+      const currentBatch = Math.floor(i / batchSize) + 1
+      const totalBatches = Math.ceil(records.length / batchSize)
+
+      ctx.logger.info(`处理批次 ${currentBatch}/${totalBatches} (${i}-${Math.min(i + batchSize, records.length)})`)
 
       await Promise.all(batch.map(async record => {
         if (!record.platform || !record.guildId || !record.userId || !record.command) {
@@ -174,7 +213,6 @@ export const io = {
           return
         }
 
-        // 直接使用记录中的原始命令
         const query = {
           platform: record.platform,
           guildId: record.guildId,
@@ -189,10 +227,8 @@ export const io = {
             // 处理 userName: 优先使用原记录非空值
             let newUserName = '';
             if (existing.userName && existing.userName.trim() !== '') {
-              // 如果原记录有非空用户名，保留原记录用户名
               newUserName = existing.userName;
             } else if (record.userName !== undefined) {
-              // 否则使用导入记录的用户名
               newUserName = utils.sanitizeString(record.userName);
             }
             // 确保用户名不等于用户ID
@@ -203,10 +239,8 @@ export const io = {
             // 处理 guildName: 优先使用原记录非空值
             let newGuildName = '';
             if (existing.guildName && existing.guildName.trim() !== '') {
-              // 如果原记录有非空群组名，保留原记录群组名
               newGuildName = existing.guildName;
             } else if (record.guildName !== undefined) {
-              // 否则使用导入记录的群组名
               newGuildName = utils.sanitizeString(record.guildName);
             }
             // 确保群组名不等于群组ID
@@ -242,9 +276,15 @@ export const io = {
           }
           imported++
         } catch (e) {
+          ctx.logger.error(`导入记录失败: ${e.message}`, query)
           errors++
         }
       }))
+
+      // 报告当前进度
+      if ((i + batchSize) % 1000 === 0 || i + batchSize >= records.length) {
+        ctx.logger.info(`已处理 ${Math.min(i + batchSize, records.length)}/${records.length} 条记录 (${imported} 成功, ${skipped} 跳过, ${errors} 失败)`)
+      }
     }
 
     return { imported, skipped, errors }

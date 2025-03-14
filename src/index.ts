@@ -380,13 +380,16 @@ export async function apply(ctx: Context, config: Config) {
     stat.subcommand('.import', '导入统计数据', { authority: 4 })
       .option('force', '-f 覆盖现有数据')
       .option('local', '-l [file:string] 从本地文件导入数据')
-      .action(async ({ options }) => {
+      .option('path', '-p [path:string] 指定导入文件的路径', { fallback: 'data' })
+      .action(async ({ session, options }) => {
         try {
           if (options.local) {
+            session.send('开始导入文件，这可能需要一段时间，请稍候...')
             const result = await io.importFromFile(ctx, options.local, options.force)
             return `${result}`
           } else {
             try {
+              session.send('开始从历史数据导入，这可能需要一段时间，请稍候...')
               const result = await io.importLegacyData(ctx, options.force)
               return `${result}`
             } catch (e) {
