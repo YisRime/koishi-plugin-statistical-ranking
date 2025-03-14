@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/koishi-plugin-statistical-ranking?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-statistical-ranking)
 
-统计群组内的命令使用和成员发言数据，支持黑白名单过滤，支持按用户/群组/平台筛选展示
+统计群组内的命令使用和成员发言数据，支持按用户/群组/平台筛选展示
 
 ## 功能
 
