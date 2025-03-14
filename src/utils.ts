@@ -149,18 +149,34 @@ export const utils = {
     // 改进: 处理undefined和null输入
     if (input === undefined || input === null) return ''
 
+    // 转为字符串
+    let result = String(input)
+
+    // 过滤掉零宽字符和控制字符
+    result = result.replace(/[\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/g, '')
+    result = result.replace(/[\x00-\x1F\x7F]/g, '')
+
+    // 处理特殊的Unicode字符(保留基本表情符号但移除复杂组合)
+    result = result.replace(/[\u{10000}-\u{10FFFF}]/u, '□')
+
+    // 去除超长的重复字符
+    result = result.replace(/(.)\1{9,}/g, '$1$1$1…')
+
     // 移除SQL注入并替换
     const sqlKeywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'SELECT', 'UNION', 'CREATE', 'ALTER']
-    let result = input
     for (const keyword of sqlKeywords) {
       const regex = new RegExp(`\\b${keyword}\\b`, 'gi')
       result = result.replace(regex, `${keyword.charAt(0)}*${keyword.charAt(keyword.length-1)}`)
     }
-    // 移除特殊字符与控制字符
-    result = result.replace(/[;'"\\=]/g, '*')
-    result = result.replace(/[\x00-\x1F\x7F]/g, '')
+
+    // 移除特殊字符与潜在的代码注入字符
+    result = result.replace(/[\<\>\`\$\(\)\[\]\{\}\;\'\"\\\=]/g, '*')
+
+    // 规范化空格(多个空格合并为单个)
+    result = result.replace(/\s+/g, ' ').trim()
+
     // 限制长度
-    return result.slice(0, 64)
+    return result.length > 64 ? result.slice(0, 61) + '...' : result
   },
 
   async processStatRecords(

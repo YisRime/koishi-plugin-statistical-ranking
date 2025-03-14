@@ -91,7 +91,15 @@ export const io = {
 
       let records
       try {
-        records = this._parseJSON(fileContent)
+        // 解析JSON数据
+        const parseResult = this.parseJSON(fileContent)
+        records = parseResult.validRecords
+
+        // 打印解析结果详情
+        ctx.logger.info(`JSON解析完成: 总记录数 ${parseResult.totalRecords}, 有效记录 ${records.length}, 无效记录 ${parseResult.invalidRecords}`)
+        if (parseResult.invalidRecords > 0) {
+          ctx.logger.warn(`发现 ${parseResult.invalidRecords} 条记录缺少必要字段，这些记录将被跳过`)
+        }
       } catch (err) {
         throw new Error(`解析JSON失败: ${err.message}`)
       }
@@ -100,8 +108,8 @@ export const io = {
       if (overwrite) await ctx.database.remove('analytics.stat', {})
 
       // 分批处理导入，避免一次处理过多数据导致内存问题
-      const result = await this._importRecords(ctx, records)
-      return `成功导入 ${result.imported} 条记录${result.skipped ? `，跳过 ${result.skipped} 条无效记录` : ''}${result.errors ? `，${result.errors} 条导入失败` : ''}`
+      const result = await this.importRecords(ctx, records)
+      return `成功导入 ${result.imported} 条记录${result.skipped ? `，跳过 ${result.skipped} 条无效记录` : ''}${result.errors ? `，${result.errors} 条导入失败` : ''}${result.invalidCount ? `\n注意：原始文件中有 ${result.invalidCount} 条记录因缺少必要字段未被导入` : ''}`
     } catch (e) {
       throw new Error(`导入失败: ${e.message}`)
     }
@@ -166,43 +174,82 @@ export const io = {
     })
 
     const batch = Array.from(mergedRecords.values())
-    const result = await this._importRecords(ctx, batch)
+    // 修复: 将_importRecords改为importRecords
+    const result = await this.importRecords(ctx, batch)
 
     return `导入完成：成功导入 ${result.imported} 条记录${result.errors > 0 ? `，${result.errors} 条记录失败` : ''}`
   },
 
-  // 辅助方法: 解析JSON
-  _parseJSON(content: string): StatRecord[] {
+  // 改进的JSON解析方法，增加了对不完整记录的处理
+  parseJSON(content: string): { validRecords: StatRecord[], totalRecords: number, invalidRecords: number } {
     try {
       const data = JSON.parse(content)
       if (!Array.isArray(data)) throw new Error('JSON文件必须包含记录数组')
 
-      return data.map(({ id, ...rest }) => ({
-        ...rest,
-        // 确保所有必要字段都有默认值，防止导入时出错
-        platform: rest.platform || 'unknown',
-        guildId: rest.guildId || 'unknown',
-        userId: rest.userId || 'unknown',
-        userName: rest.userName ?? '',
-        guildName: rest.guildName ?? '',
-        command: rest.command || 'unknown',
-        count: parseInt(String(rest.count)) || 1,
-        lastTime: rest.lastTime ? new Date(rest.lastTime) : new Date()
-      })) as StatRecord[]
+      const totalRecords = data.length
+      let invalidRecords = 0
+
+      // 筛选出有效记录并进行标准化处理
+      const validRecords = data.reduce((acc, record) => {
+        // 检查记录是否包含所有必要字段
+        if (!record.platform || !record.guildId || !record.userId || !record.command) {
+          invalidRecords++
+          return acc
+        }
+
+        const { id, ...rest } = record
+        // 添加有效记录到结果数组
+        acc.push({
+          ...rest,
+          // 规范化字段值
+          platform: rest.platform || 'unknown',
+          guildId: rest.guildId || 'unknown',
+          userId: rest.userId || 'unknown',
+          userName: rest.userName ?? '',
+          guildName: rest.guildName ?? '',
+          command: rest.command || 'unknown',
+          count: parseInt(String(rest.count)) || 1,
+          lastTime: rest.lastTime ? new Date(rest.lastTime) : new Date()
+        })
+        return acc
+      }, [] as StatRecord[])
+
+      return {
+        validRecords,
+        totalRecords,
+        invalidRecords
+      }
     } catch (error) {
       throw new Error(`JSON解析错误: ${error.message}`)
     }
   },
 
-  // 辅助方法: 导入记录 - 修改为不忽略任何记录
-  async _importRecords(ctx: Context, records: StatRecord[]) {
+  // 改进: 导入记录方法
+  async importRecords(ctx: Context, records: StatRecord[]) {
     let imported = 0, skipped = 0, errors = 0
     const totalRecords = records.length
+    const invalidCount = 0  // 将在parseJSON中处理，这里只处理有效记录
 
-    ctx.logger.info(`开始导入 ${totalRecords} 条记录`)
+    ctx.logger.info(`开始导入 ${totalRecords} 条有效记录`)
 
     // 增加批处理大小，使处理更高效
     const batchSize = 100
+
+    // 辅助函数：处理名称
+    const processName = (name: string, id: string): string => {
+      if (!name) return '';
+
+      // 增强的名称清洗处理
+      let cleanName = utils.sanitizeString(name);
+
+      // 如果清洗后为空或仅有无意义字符
+      if (!cleanName || /^[\s*□]+$/.test(cleanName)) return '';
+
+      // 检查名称是否与ID相同或包含ID（常见于默认名称）
+      if (id && (cleanName === id || cleanName.includes(id))) return '';
+
+      return cleanName;
+    };
 
     for (let i = 0; i < records.length; i += batchSize) {
       const batch = records.slice(i, i + batchSize)
@@ -212,12 +259,12 @@ export const io = {
       ctx.logger.info(`处理批次 ${currentBatch}/${totalBatches} (${i}-${Math.min(i + batchSize, records.length)})`)
 
       await Promise.all(batch.map(async record => {
-        // 删除了记录验证，尝试导入所有记录
+        // 尝试导入所有有效记录
         const query = {
-          platform: record.platform || 'unknown',
-          guildId: record.guildId || 'unknown',
-          userId: record.userId || 'unknown',
-          command: record.command || 'unknown'
+          platform: record.platform,
+          guildId: record.guildId,
+          userId: record.userId,
+          command: record.command
         }
 
         try {
@@ -229,11 +276,8 @@ export const io = {
             if (existing.userName && existing.userName.trim() !== '') {
               newUserName = existing.userName;
             } else if (record.userName !== undefined) {
-              newUserName = utils.sanitizeString(record.userName);
-            }
-            // 确保用户名不等于用户ID
-            if (newUserName === record.userId) {
-              newUserName = '';
+              // 加强处理用户名
+              newUserName = processName(record.userName, record.userId);
             }
 
             // 处理 guildName: 优先使用原记录非空值
@@ -241,11 +285,8 @@ export const io = {
             if (existing.guildName && existing.guildName.trim() !== '') {
               newGuildName = existing.guildName;
             } else if (record.guildName !== undefined) {
-              newGuildName = utils.sanitizeString(record.guildName);
-            }
-            // 确保群组名不等于群组ID
-            if (newGuildName === record.guildId) {
-              newGuildName = '';
+              // 加强处理群组名
+              newGuildName = processName(record.guildName, record.guildId);
             }
 
             await ctx.database.set('analytics.stat', query, {
@@ -256,15 +297,8 @@ export const io = {
             })
           } else {
             // 处理新记录的 userName 和 guildName
-            let newUserName = record.userName ? utils.sanitizeString(record.userName) : '';
-            if (newUserName === record.userId) {
-              newUserName = '';
-            }
-
-            let newGuildName = record.guildName ? utils.sanitizeString(record.guildName) : '';
-            if (newGuildName === record.guildId) {
-              newGuildName = '';
-            }
+            const newUserName = processName(record.userName, record.userId);
+            const newGuildName = processName(record.guildName, record.guildId);
 
             await ctx.database.create('analytics.stat', {
               ...query,
@@ -287,6 +321,6 @@ export const io = {
       }
     }
 
-    return { imported, skipped, errors }
+    return { imported, skipped, errors, invalidCount }
   }
 }
