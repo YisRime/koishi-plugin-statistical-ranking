@@ -186,10 +186,10 @@ export const utils = {
         : undefined
     )
 
-    // 添加预过滤步骤，确保命令统计时不包含 __message__
+    // 添加预过滤步骤，确保命令统计时不包含 mmeessssaaggee
     let filteredRecords = records;
     if (aggregateKey === 'command' && !options.disableCommandMerge) {
-      filteredRecords = records.filter(record => record.command !== '__message__');
+      filteredRecords = records.filter(record => record.command !== 'mmeessssaaggee');
     }
 
     const nameMap = new Map<string, string>()
