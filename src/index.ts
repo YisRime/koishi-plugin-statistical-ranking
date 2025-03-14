@@ -363,13 +363,11 @@ export async function apply(ctx: Context, config: Config) {
       .option('cmd', '-c [command:string] 指定命令')
       .action(async ({ options }) => {
         try {
-          const format = options.csv ? 'csv' : 'json'
           const result = await io.exportToFile(ctx, 'stat-export', {
             userId: options.user,
             platform: options.platform,
             guildId: options.guild,
-            command: options.cmd,
-            format
+            command: options.cmd
           })
           return `成功导出 ${result.count} 条记录到 ${result.filename}`
         } catch (e) {

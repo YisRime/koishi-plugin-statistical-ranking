@@ -17,49 +17,29 @@ export const io = {
     platform?: string
     guildId?: string
     command?: string
-    format?: 'json' | 'csv'
   }) {
     // 构建查询条件
     const query = Object.entries(options)
-      .filter(([key, value]) => value && key !== 'format')
+      .filter(([_, value]) => Boolean(value))
       .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {})
 
     // 查询数据
     const records = await ctx.database.get('analytics.stat', query)
     if (!records.length) throw new Error('没有找到匹配的记录')
 
-    const format = options.format || 'json'
-    const outputFilename = `${filename}.${format}`
+    const outputFilename = `${filename}.json`
     const dataDir = path.join(process.cwd(), 'data')
     const filePath = path.join(dataDir, outputFilename)
 
     try {
-      if (format === 'csv') {
-        // CSV 格式导出
-        const headers = ['platform', 'guildId', 'userId', 'command', 'userName', 'guildName', 'count', 'lastTime']
-        const csvContent = [
-          headers.join(','),
-          ...records.map(record => headers.map(header => {
-            const value = record[header]
-            if (value === null || value === undefined) return ''
-            if (header === 'lastTime') return new Date(value).toISOString()
-            return typeof value === 'string'
-              ? `"${value.replace(/"/g, '""')}"`
-              : String(value)
-          }).join(','))
-        ].join('\n')
-
-        fs.writeFileSync(filePath, csvContent, 'utf-8')
-      } else {
-        // JSON 格式导出
-        const exportRecords = records.map(({ id, ...rest }) => rest)
-        fs.writeFileSync(filePath, JSON.stringify(exportRecords, null, 2), 'utf-8')
-      }
+      // JSON 格式导出
+      const exportRecords = records.map(({ id, ...rest }) => rest)
+      fs.writeFileSync(filePath, JSON.stringify(exportRecords, null, 2), 'utf-8')
 
       return {
         count: records.length,
         path: filePath,
-        format,
+        format: 'json',
         filename: outputFilename
       }
     } catch (e) {
@@ -81,8 +61,6 @@ export const io = {
       if (!path.extname(filename)) {
         if (fs.existsSync(path.join(dataDir, `${filename}.json`))) {
           filename = `${filename}.json`;
-        } else if (fs.existsSync(path.join(dataDir, `${filename}.csv`))) {
-          filename = `${filename}.csv`;
         }
       }
 
@@ -90,14 +68,7 @@ export const io = {
       if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filename}`)
 
       const fileContent = fs.readFileSync(filePath, 'utf-8')
-      const ext = path.extname(filename).toLowerCase()
-      let records: StatRecord[] = []
-
-      if (ext === '.csv') {
-        records = this._parseCSV(fileContent)
-      } else {
-        records = this._parseJSON(fileContent)
-      }
+      const records = this._parseJSON(fileContent)
 
       // 如果覆盖模式，先清除数据
       if (overwrite) await ctx.database.remove('analytics.stat', {})
@@ -143,7 +114,7 @@ export const io = {
       const binding = userIdMap.get(cmd.userId?.toString())
       if (!binding || !cmd.channelId) return
 
-      // 确保命令字段正确，普通消息使用 mmeessssaaggee
+      // 确保命令字段正确
       const commandValue = cmd.name || 'mmeessssaaggee'
 
       const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${commandValue}`
@@ -173,54 +144,6 @@ export const io = {
     return `导入完成：成功导入 ${result.imported} 条记录${result.errors > 0 ? `，${result.errors} 条记录失败` : ''}`
   },
 
-  // 辅助方法: 解析CSV
-  _parseCSV(content: string): StatRecord[] {
-    const lines = content.trim().split('\n')
-    if (lines.length < 2) throw new Error('CSV文件格式不正确')
-
-    const headers = lines[0].split(',')
-    return lines.slice(1).map(line => {
-      const values = []
-      let inQuotes = false
-      let currentValue = ''
-
-      for (let i = 0; i < line.length; i++) {
-        const char = line[i]
-        if (char === '"') {
-          if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
-            currentValue += '"'
-            i++
-          } else {
-            inQuotes = !inQuotes
-          }
-        } else if (char === ',' && !inQuotes) {
-          values.push(currentValue)
-          currentValue = ''
-        } else {
-          currentValue += char
-        }
-      }
-      values.push(currentValue)
-
-      const record: any = {}
-      headers.forEach((header, index) => {
-        if (header === 'id') return
-        const value = values[index] || ''
-
-        if (header === 'count') {
-          record[header] = parseInt(value) || 0
-        } else if (header === 'lastTime') {
-          record[header] = value ? new Date(value) : new Date()
-        } else {
-          record[header] = value
-        }
-      })
-
-      if (!record.command) record.command = 'mmeessssaaggee'
-      return record
-    })
-  },
-
   // 辅助方法: 解析JSON
   _parseJSON(content: string): StatRecord[] {
     const data = JSON.parse(content)
@@ -230,7 +153,8 @@ export const io = {
       ...rest,
       userName: rest.userName ?? '',
       guildName: rest.guildName ?? '',
-      command: rest.command || 'mmeessssaaggee',
+      // 直接使用原始 command 值，不再设置默认值
+      command: rest.command ?? '',
       count: parseInt(String(rest.count)) || 1,
       lastTime: rest.lastTime ? new Date(rest.lastTime) : new Date()
     })) as StatRecord[]
@@ -245,11 +169,12 @@ export const io = {
       const batch = records.slice(i, i + batchSize)
 
       await Promise.all(batch.map(async record => {
-        if (!record.platform || !record.guildId || !record.userId) {
+        if (!record.platform || !record.guildId || !record.userId || !record.command) {
           skipped++
           return
         }
 
+        // 直接使用记录中的原始命令
         const query = {
           platform: record.platform,
           guildId: record.guildId,
@@ -261,20 +186,58 @@ export const io = {
           const [existing] = await ctx.database.get('analytics.stat', query)
 
           if (existing) {
+            // 处理 userName: 优先使用原记录非空值
+            let newUserName = '';
+            if (existing.userName && existing.userName.trim() !== '') {
+              // 如果原记录有非空用户名，保留原记录用户名
+              newUserName = existing.userName;
+            } else if (record.userName !== undefined) {
+              // 否则使用导入记录的用户名
+              newUserName = utils.sanitizeString(record.userName);
+            }
+            // 确保用户名不等于用户ID
+            if (newUserName === record.userId) {
+              newUserName = '';
+            }
+
+            // 处理 guildName: 优先使用原记录非空值
+            let newGuildName = '';
+            if (existing.guildName && existing.guildName.trim() !== '') {
+              // 如果原记录有非空群组名，保留原记录群组名
+              newGuildName = existing.guildName;
+            } else if (record.guildName !== undefined) {
+              // 否则使用导入记录的群组名
+              newGuildName = utils.sanitizeString(record.guildName);
+            }
+            // 确保群组名不等于群组ID
+            if (newGuildName === record.guildId) {
+              newGuildName = '';
+            }
+
             await ctx.database.set('analytics.stat', query, {
               count: existing.count + (record.count || 1),
               lastTime: new Date(Math.max(existing.lastTime?.getTime() || 0, record.lastTime?.getTime() || Date.now())),
-              // 修复: 使用 !== undefined 而不是 truthy 检查，确保空字符串也会被正确导入
-              userName: record.userName !== undefined ? utils.sanitizeString(record.userName) : existing.userName || '',
-              guildName: record.guildName !== undefined ? utils.sanitizeString(record.guildName) : existing.guildName || ''
+              userName: newUserName,
+              guildName: newGuildName
             })
           } else {
+            // 处理新记录的 userName 和 guildName
+            let newUserName = record.userName ? utils.sanitizeString(record.userName) : '';
+            if (newUserName === record.userId) {
+              newUserName = '';
+            }
+
+            let newGuildName = record.guildName ? utils.sanitizeString(record.guildName) : '';
+            if (newGuildName === record.guildId) {
+              newGuildName = '';
+            }
+
             await ctx.database.create('analytics.stat', {
               ...query,
               count: record.count || 1,
               lastTime: record.lastTime || new Date(),
-              userName: record.userName ? utils.sanitizeString(record.userName) : '',
-              guildName: record.guildName ? utils.sanitizeString(record.guildName) : ''
+              userName: newUserName,
+              guildName: newGuildName
             })
           }
           imported++

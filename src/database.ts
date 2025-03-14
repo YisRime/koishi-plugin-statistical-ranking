@@ -3,20 +3,9 @@ import { Config, StatRecord } from './index'
 import { utils } from './utils'
 
 /**
- * 目标对象接口
- * @interface Target
- * @description 用于权限检查的目标对象结构
- */
-interface Target {
-  platform: string
-  guildId: string
-  userId: string
-}
-
-/**
  * @internal
  * 数据库操作相关函数集合
- * @description 提供数据库初始化、记录保存、权限检查等核心功能
+ * @description 提供数据库初始化、记录保存等核心功能
  */
 export const database = {
   /**
@@ -46,7 +35,7 @@ export const database = {
    * 保存统计记录
    * @param ctx - Koishi 上下文
    * @param data - 需要保存的记录数据
-   * @description 检查权限并更新或插入统计记录
+   * @description 更新或插入统计记录
    */
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
     if (!data.platform || !data.guildId || !data.userId) {
@@ -57,31 +46,6 @@ export const database = {
     // 设置默认命令值
     data.command ||= 'mmeessssaaggee'
 
-    // 权限检查逻辑（原 checkPermissions 方法）
-    const config = ctx.config.statistical_ranking
-    if (config?.enableFilter) {
-      const target = { platform: data.platform, guildId: data.guildId, userId: data.userId }
-
-      // 优先检查白名单
-      if (config.whitelist?.length) {
-        if (!utils.matchRuleList(config.whitelist, target)) return
-      }
-      // 白名单为空时，检查黑名单
-      else if (config.blacklist?.length) {
-        if (utils.matchRuleList(config.blacklist, target)) return
-      }
-    }
-
-    await database.upsertRecord(ctx, data)
-  },
-
-  /**
-   * 批量更新或插入记录
-   * @param ctx - Koishi 上下文
-   * @param data - 记录数据
-   * @description 使用 upsert 操作保存记录，出错时记录日志
-   */
-  async upsertRecord(ctx: Context, data: Partial<StatRecord>) {
     try {
       const query = {
         platform: data.platform,
