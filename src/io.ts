@@ -179,9 +179,13 @@ export const io = {
 
       return data.map(({ id, ...rest }) => ({
         ...rest,
+        // 确保所有必要字段都有默认值，防止导入时出错
+        platform: rest.platform || 'unknown',
+        guildId: rest.guildId || 'unknown',
+        userId: rest.userId || 'unknown',
         userName: rest.userName ?? '',
         guildName: rest.guildName ?? '',
-        command: rest.command ?? '',
+        command: rest.command || 'unknown',
         count: parseInt(String(rest.count)) || 1,
         lastTime: rest.lastTime ? new Date(rest.lastTime) : new Date()
       })) as StatRecord[]
@@ -190,7 +194,7 @@ export const io = {
     }
   },
 
-  // 辅助方法: 导入记录
+  // 辅助方法: 导入记录 - 修改为不忽略任何记录
   async _importRecords(ctx: Context, records: StatRecord[]) {
     let imported = 0, skipped = 0, errors = 0
     const totalRecords = records.length
@@ -208,16 +212,12 @@ export const io = {
       ctx.logger.info(`处理批次 ${currentBatch}/${totalBatches} (${i}-${Math.min(i + batchSize, records.length)})`)
 
       await Promise.all(batch.map(async record => {
-        if (!record.platform || !record.guildId || !record.userId || !record.command) {
-          skipped++
-          return
-        }
-
+        // 删除了记录验证，尝试导入所有记录
         const query = {
-          platform: record.platform,
-          guildId: record.guildId,
-          userId: record.userId,
-          command: record.command
+          platform: record.platform || 'unknown',
+          guildId: record.guildId || 'unknown',
+          userId: record.userId || 'unknown',
+          command: record.command || 'unknown'
         }
 
         try {
