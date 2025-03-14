@@ -44,7 +44,7 @@ export const database = {
     }
 
     // 设置默认命令值
-    data.command ||= 'mmeessssaaggee'
+    data.command ||= 'mess_age'
 
     try {
       const query = {

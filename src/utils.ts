@@ -382,14 +382,14 @@ export const utils = {
     if (options.platform) query.platform = options.platform
     if (type === 'user') {
       // 用户发言统计只查询普通消息
-      query.command = 'mmeessssaaggee' // 修改从 $neq 改为 $ne，确保正确排除
+      query.command = 'mess_age' // 修改从 $neq 改为 $ne，确保正确排除
     } else if (type === 'command') {
       if (options.command) {
         // 指定了命令，直接查询该命令
         query.command = options.command
       } else {
         // 没指定命令，则排除普通消息
-        query.command = { $neq: 'mmeessssaaggee' }
+        query.command = { $neq: 'mess_age' }
       }
     } else if (options.command) {
       // 群组统计且指定了命令

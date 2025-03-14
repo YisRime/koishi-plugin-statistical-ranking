@@ -150,7 +150,7 @@ export const io = {
       if (!binding || !cmd.channelId) return
 
       // 确保命令字段正确
-      const commandValue = cmd.name || 'mmeessssaaggee'
+      const commandValue = cmd.name || 'mess_age'
 
       const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${commandValue}`
       const timestamp = new Date((cmd.date * 86400000) + ((cmd.hour || 0) * 3600000))

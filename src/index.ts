@@ -20,9 +20,6 @@ export const inject = ['database']
  * @interface Config
  * @property {boolean} [enableImport] - 是否启用数据导入功能
  * @property {boolean} [enableClear] - 是否启用数据清除功能
- * @property {boolean} [enableFilter] - 是否启用记录过滤功能
- * @property {string[]} [blacklist] - 记录黑名单列表
- * @property {string[]} [whitelist] - 记录白名单列表
  * @property {boolean} [enableDisplayFilter] - 是否启用显示过滤功能
  * @property {string[]} [displayBlacklist] - 显示过滤黑名单
  * @property {string[]} [displayWhitelist] - 显示过滤白名单
@@ -31,9 +28,6 @@ export const inject = ['database']
 export interface Config {
   enableImport?: boolean
   enableClear?: boolean
-  enableFilter?: boolean
-  blacklist?: string[]
-  whitelist?: string[]
   enableDisplayFilter?: boolean
   displayBlacklist?: string[]
   displayWhitelist?: string[]
@@ -49,26 +43,8 @@ export const Config = Schema.intersect([
     enableImport: Schema.boolean().default(true).description('启用统计数据导入命令'),
     enableExport: Schema.boolean().default(true).description('启用统计数据导出命令'),
     enableClear: Schema.boolean().default(true).description('启用统计数据清除命令'),
-    enableFilter: Schema.boolean().default(false).description('启用记录过滤功能'),
     enableDisplayFilter: Schema.boolean().default(false).description('启用显示过滤功能'),
   }).description('基础配置'),
-  Schema.union([
-    Schema.object({
-      enableFilter: Schema.const(true).required(),
-      whitelist: Schema.array(Schema.string())
-        .description('记录白名单，仅统计这些记录（先于黑名单生效）')
-        .default([]),
-      blacklist: Schema.array(Schema.string())
-        .description('记录黑名单，将不会统计以下命令/用户/群组/平台')
-        .default([
-          'onebot:12345:67890',
-          'qq::12345',
-          'sandbox::',
-          '.help',
-        ]),
-    }),
-    Schema.object({}),
-  ]),
   Schema.union([
     Schema.object({
       enableDisplayFilter: Schema.const(true).required(),
@@ -173,30 +149,6 @@ export async function apply(ctx: Context, config: Config) {
   const handleRecord = async (session: any, command?: string) => {
     const info = await utils.getSessionInfo(session)
     if (!info) return
-    if (config.enableFilter) {
-      // 优先检查白名单
-      if (config.whitelist?.length) {
-        if (!utils.matchRuleList(config.whitelist, {
-          platform: info.platform,
-          guildId: info.guildId,
-          userId: info.userId,
-          command
-        })) {
-          return
-        }
-      }
-      // 白名单为空时，检查黑名单
-      else if (config.blacklist?.length) {
-        if (utils.matchRuleList(config.blacklist, {
-          platform: info.platform,
-          guildId: info.guildId,
-          userId: info.userId,
-          command
-        })) {
-          return
-        }
-      }
-    }
 
     // 将 null/undefined 命令正确转换为 mmeessssaaggee
     const commandValue = command || 'mmeessssaaggee'
@@ -206,7 +158,32 @@ export async function apply(ctx: Context, config: Config) {
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
   ctx.on('message', (session) => handleRecord(session, null))
 
-  const stat = ctx.command('stat [arg:string]', '查看命令统计')
+  const stat = ctx.command('stat', '查看统计信息')
+    .action(async ({ session }) => {
+      if (!session?.userId || !session?.platform) return '无法获取您的用户信息'
+
+      // 获取用户完整信息
+      const userInfo = await utils.getSessionInfo(session)
+      if (!userInfo) return '无法获取您的用户信息'
+
+      // 查询当前用户的统计数据
+      const options = { user: userInfo.userId, platform: userInfo.platform }
+      const result = await utils.handleStatQuery(ctx, options, 'user')
+      if (typeof result === 'string') return result
+
+      const processed = await utils.processStatRecords(result.records, 'command', {
+        sortBy: 'count',
+        disableCommandMerge: false,
+        displayBlacklist: config.enableDisplayFilter ? config.displayBlacklist : [],
+        displayWhitelist: config.enableDisplayFilter ? config.displayWhitelist : [],
+        title: `${userInfo.userName || userInfo.userId} 的使用统计 ——`
+      })
+
+      return processed.title + '\n' + processed.items.join('\n')
+    })
+
+  // 将原stat命令的功能移动到stat.command子命令中
+  stat.subcommand('.command [arg:string]', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
