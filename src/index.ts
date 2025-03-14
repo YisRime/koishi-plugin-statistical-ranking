@@ -1,5 +1,6 @@
 import { Context, Schema } from 'koishi'
 import { database } from './database'
+import { io } from './io'
 import { utils } from './utils'
 
 /**
@@ -107,7 +108,7 @@ declare module 'koishi' {
  * @property {string} guildId - 群组/频道 ID，私聊时为 'private'
  * @property {string} userId - 用户在该平台的唯一标识
  * @property {string} [userName] - 用户昵称，可选
- * @property {string} command - 命令名称，普通消息时为 '__message__'
+ * @property {string} command - 命令名称，普通消息时为 'mmeessssaaggee'
  * @property {number} count - 记录次数，用于统计使用频率
  * @property {Date} lastTime - 最后一次记录的时间
  * @property {string} [guildName] - 群组/频道名称，可选
@@ -197,8 +198,8 @@ export async function apply(ctx: Context, config: Config) {
       }
     }
 
-    // 将 null/undefined 命令正确转换为 __message__
-    const commandValue = command || '__message__'
+    // 将 null/undefined 命令正确转换为 mmeessssaaggee
+    const commandValue = command || 'mmeessssaaggee'
     await database.saveRecord(ctx, { ...info, command: commandValue })
   }
 
@@ -363,7 +364,7 @@ export async function apply(ctx: Context, config: Config) {
       .action(async ({ options }) => {
         try {
           const format = options.csv ? 'csv' : 'json'
-          const result = await database.exportToFile(ctx, 'stat-export', {
+          const result = await io.exportToFile(ctx, 'stat-export', {
             userId: options.user,
             platform: options.platform,
             guildId: options.guild,
@@ -384,11 +385,11 @@ export async function apply(ctx: Context, config: Config) {
       .action(async ({ options }) => {
         try {
           if (options.local) {
-            const result = await database.importFromFile(ctx, options.local, options.force)
+            const result = await io.importFromFile(ctx, options.local, options.force)
             return `${result}`
           } else {
             try {
-              const result = await database.importLegacyData(ctx, options.force)
+              const result = await io.importLegacyData(ctx, options.force)
               return `${result}`
             } catch (e) {
               if (e.message.includes('找不到历史数据表')) {

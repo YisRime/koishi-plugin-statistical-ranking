@@ -185,8 +185,15 @@ export const utils = {
         ? (k: string) => k?.split('.')[0] || ''
         : undefined
     )
+
+    // 添加预过滤步骤，确保命令统计时不包含 __message__
+    let filteredRecords = records;
+    if (aggregateKey === 'command' && !options.disableCommandMerge) {
+      filteredRecords = records.filter(record => record.command !== '__message__');
+    }
+
     const nameMap = new Map<string, string>()
-    for (const record of records) {
+    for (const record of filteredRecords) {
       stats.add(record[aggregateKey] as string, record.count, record.lastTime)
       if ((aggregateKey === 'userId' && record.userName) ||
           (aggregateKey === 'guildId' && record.guildName)) {
@@ -359,14 +366,14 @@ export const utils = {
     if (options.platform) query.platform = options.platform
     if (type === 'user') {
       // 用户发言统计只查询普通消息
-      query.command = '__message__'
+      query.command = 'mmeessssaaggee' // 修改从 $neq 改为 $ne，确保正确排除
     } else if (type === 'command') {
       if (options.command) {
         // 指定了命令，直接查询该命令
         query.command = options.command
       } else {
         // 没指定命令，则排除普通消息
-        query.command = { $neq: '__message__' }
+        query.command = { $neq: 'mmeessssaaggee' }
       }
     } else if (options.command) {
       // 群组统计且指定了命令
