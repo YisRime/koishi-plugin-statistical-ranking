@@ -111,7 +111,6 @@ export const io = {
       // 收集文件信息和批次组
       const fileInfo = {}
       const batchGroups = new Map()
-      const filesInBatchGroups = new Set()
 
       for (const file of statFiles) {
         const filePath = path.join(dataDir, file)
@@ -134,12 +133,11 @@ export const io = {
             batchGroups.set(key, [])
           }
           batchGroups.get(key).push(file)
-          // 记录该文件属于批次组
-          filesInBatchGroups.add(file)
         }
 
         fileInfo[file] = {
           mtime: stats.mtime.toLocaleString(),
+          timestamp: stats.mtime.getTime(),
           isBatch,
           batchInfo
         }
@@ -167,6 +165,7 @@ export const io = {
           // 添加批次组信息
           fileInfo[groupName] = {
             mtime: latestTime.toLocaleString(),
+            timestamp: latestTime.getTime(),
             isBatch: true,
             batchInfo: {
               base: baseFilename,
@@ -185,20 +184,11 @@ export const io = {
         }
       })
 
-      // 过滤掉已经在批次组中的文件
-      const filteredStatFiles = statFiles.filter(file => !filesInBatchGroups.has(file))
-
-      // 合并所有文件列表并排序
-      const allFiles = [...batchGroupFiles, ...filteredStatFiles]
+      // 合并所有文件列表并排序 (不再过滤批次组中的文件)
+      const allFiles = [...batchGroupFiles, ...statFiles]
       const sortedFiles = allFiles.sort((a, b) => {
-        // 批次组优先
-        const aIsGroup = a.includes('批次组')
-        const bIsGroup = b.includes('批次组')
-        if (aIsGroup !== bIsGroup) {
-          return aIsGroup ? -1 : 1
-        }
         // 按修改时间降序
-        return new Date(fileInfo[b].mtime).getTime() - new Date(fileInfo[a].mtime).getTime()
+        return fileInfo[b].timestamp - fileInfo[a].timestamp
       })
 
       return { files: sortedFiles, fileInfo }

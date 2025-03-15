@@ -372,25 +372,46 @@ export async function apply(ctx: Context, config: Config) {
             }
           }
           // 获取可导入文件列表
-          const { files } = await io.listImportFiles(ctx)
+          const { files, fileInfo } = await io.listImportFiles(ctx)
           if (!files.length) {
             return '未找到可导入的文件'
           }
           // 使用序号选择文件导入
           const selector = args[0]
           if (selector) {
-            // 处理导入
+            // 处理纯数字序号输入
+            if (/^\d+$/.test(selector)) {
+              const index = parseInt(selector) - 1
+              if (index < 0 || index >= files.length) {
+                return `无效的序号：${selector}，序号范围应为1-${files.length}`
+              }
+              // 使用序号对应的文件名
+              const targetFile = files[index]
+              await session.send(`正在${options.force ? '覆盖' : ''}导入文件：${targetFile}...`)
+              const result = await io.importFromFile(ctx, targetFile, options.force)
+              return result
+            }
+            // 处理其他格式的导入
             await session.send(`正在${options.force ? '覆盖' : ''}导入...`)
             const result = await io.importFromFile(ctx, selector, options.force)
             return result
           }
           // 显示文件列表
           const fileList = files.map((file, index) => {
-            const prefix = file.includes('批次组') ? '📦' : '📄'
-            return `${index + 1}.${prefix}${file}`
+            const info = fileInfo[file] || {}
+            // 确定文件图标
+            let prefix = '📄'
+            if (file.includes('批次组')) {
+              prefix = '📦'
+            } else if (info.isBatch) {
+              prefix = '📎'
+            }
+            // 添加修改时间
+            const timeInfo = info.mtime ? ` (${info.mtime})` : ''
+            return `${index + 1}.${prefix}${file}${timeInfo}`
           }).join('\n')
 
-          return `使用 import [序号](-[文件]) 导入对应文件：\n${fileList}`
+          return `使用 import [序号] 导入对应文件：\n${fileList}`
         } catch (e) {
           ctx.logger.error(`导入失败: ${e.message}`)
           return `导入失败：${e.message}`
