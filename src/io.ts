@@ -4,112 +4,310 @@ import { utils } from './utils'
 import * as fs from 'fs'
 import * as path from 'path'
 
+/**
+ * 获取统计数据目录
+ */
+function getStatDirectory(): string {
+  const statDir = path.join(process.cwd(), 'data', 'stat')
+  if (!fs.existsSync(statDir)) {
+    fs.mkdirSync(statDir, { recursive: true })
+  }
+  return statDir
+}
+
+/**
+ * I/O 操作相关函数
+ */
 export const io = {
   /**
    * 导出统计数据到文件
-   * @param ctx Koishi上下文
-   * @param filename 导出的文件名
-   * @param options 导出选项
-   * @returns 导出结果
    */
   async exportToFile(ctx: Context, filename: string, options: {
     userId?: string
     platform?: string
     guildId?: string
     command?: string
+    batchSize?: number
   }) {
     // 构建查询条件
     const query = Object.entries(options)
-      .filter(([_, value]) => Boolean(value))
+      .filter(([key, value]) => key !== 'batchSize' && Boolean(value))
       .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {})
 
     // 查询数据
     const records = await ctx.database.get('analytics.stat', query)
     if (!records.length) throw new Error('没有找到匹配的记录')
 
-    const outputFilename = `${filename}.json`
-    const dataDir = path.join(process.cwd(), 'data')
-    const filePath = path.join(dataDir, outputFilename)
+    // 生成文件名
+    const timestamp = new Date().toISOString().replace(/[:T.]/g, '-').substring(0, 19)
+    const batchSize = options.batchSize || 200
+    const dataDir = getStatDirectory()
 
-    try {
-      // JSON 格式导出
-      const exportRecords = records.map(({ id, ...rest }) => rest)
-      fs.writeFileSync(filePath, JSON.stringify(exportRecords, null, 2), 'utf-8')
+    // 处理批次
+    const totalRecords = records.length
+    const batches = Math.ceil(totalRecords / batchSize)
+    const exportFiles = []
 
-      return {
-        count: records.length,
-        path: filePath,
-        format: 'json',
-        filename: outputFilename
+    for (let batch = 0; batch < batches; batch++) {
+      // 计算当前批次的数据范围
+      const start = batch * batchSize
+      const end = Math.min((batch + 1) * batchSize, totalRecords)
+      const batchRecords = records.slice(start, end)
+
+      // 确定输出文件名
+      let outputFilename = batches === 1
+        ? `${filename}-${timestamp}.json`
+        : `${filename}-${timestamp}-${batch+1}-${batches}.json`
+
+      const filePath = path.join(dataDir, outputFilename)
+
+      try {
+        // 导出为JSON格式
+        const exportData = batchRecords.map(({ id, ...rest }) => rest)
+        fs.writeFileSync(filePath, JSON.stringify(exportData, null, 2), 'utf-8')
+
+        exportFiles.push({
+          count: batchRecords.length,
+          path: filePath,
+          format: 'json',
+          filename: outputFilename,
+          batch: batch + 1,
+          totalBatches: batches
+        })
+      } catch (e) {
+        throw new Error(`写入文件失败 (批次 ${batch+1}): ${e.message}`)
       }
+    }
+
+    return {
+      count: totalRecords,
+      batches: batches,
+      files: exportFiles
+    }
+  },
+
+  /**
+   * 列出可导入的文件
+   */
+  async listImportFiles(ctx: Context) {
+    const dataDir = getStatDirectory()
+    try {
+      // 读取目录内容
+      const files = await fs.promises.readdir(dataDir)
+
+      // 过滤统计数据JSON文件
+      const statFiles = files.filter(file =>
+        file.endsWith('.json') &&
+        (file.includes('stat') || file.includes('analytics'))
+      )
+
+      if (statFiles.length === 0) {
+        return { files: [], fileInfo: {} }
+      }
+
+      // 收集文件信息和批次组
+      const fileInfo = {}
+      const batchGroups = new Map()
+
+      for (const file of statFiles) {
+        const filePath = path.join(dataDir, file)
+        const stats = await fs.promises.stat(filePath)
+
+        // 检查是否是批次文件
+        const batchMatch = file.match(/(.*)-(\d+)-(\d+)\.json$/)
+        const isBatch = !!batchMatch
+
+        let batchInfo = undefined
+        if (isBatch) {
+          const [, baseFilename, currentBatch, totalBatches] = batchMatch
+          batchInfo = {
+            base: baseFilename,
+            current: parseInt(currentBatch),
+            total: parseInt(totalBatches)
+          }
+
+          // 添加到批次组
+          const key = `${baseFilename}-total${totalBatches}`
+          if (!batchGroups.has(key)) {
+            batchGroups.set(key, [])
+          }
+          batchGroups.get(key).push(file)
+        }
+
+        fileInfo[file] = {
+          size: (stats.size / 1024).toFixed(2) + ' KB',
+          mtime: stats.mtime.toLocaleString(),
+          isBatch,
+          batchInfo
+        }
+      }
+
+      // 生成批次组文件信息
+      const batchGroupFiles = []
+      batchGroups.forEach((files, key) => {
+        if (files.length > 1) {
+          // 提取批次组基本信息
+          const groupInfo = files[0].match(/(.*)-(\d+)-(\d+)\.json$/)
+          if (!groupInfo) return
+
+          const [, baseFilename, , totalBatches] = groupInfo
+          const groupName = `${baseFilename}-批次组(共${totalBatches}个文件)`
+
+          // 计算总大小和最新修改时间
+          let totalSize = 0
+          let latestTime = new Date(0)
+
+          files.forEach(file => {
+            const info = fileInfo[file]
+            totalSize += parseFloat(info.size)
+            const fileTime = new Date(info.mtime)
+            if (fileTime > latestTime) {
+              latestTime = fileTime
+            }
+          })
+
+          // 添加批次组信息
+          fileInfo[groupName] = {
+            size: `${totalSize.toFixed(2)} KB (总计)`,
+            mtime: latestTime.toLocaleString(),
+            isBatch: true,
+            batchInfo: {
+              base: baseFilename,
+              current: 0,
+              total: parseInt(totalBatches)
+            }
+          }
+
+          batchGroupFiles.push(groupName)
+        }
+      })
+
+      // 合并所有文件列表并排序
+      const allFiles = [...batchGroupFiles, ...statFiles]
+      const sortedFiles = allFiles.sort((a, b) => {
+        // 批次组优先
+        const aIsGroup = a.includes('批次组')
+        const bIsGroup = b.includes('批次组')
+        if (aIsGroup !== bIsGroup) {
+          return aIsGroup ? -1 : 1
+        }
+        // 按修改时间降序
+        return new Date(fileInfo[b].mtime).getTime() - new Date(fileInfo[a].mtime).getTime()
+      })
+
+      return { files: sortedFiles, fileInfo }
     } catch (e) {
-      throw new Error(`写入文件失败: ${e.message}`)
+      ctx.logger.error(`读取数据目录失败: ${e.message}`)
+      return { files: [], fileInfo: {} }
     }
   },
 
   /**
    * 从文件导入统计数据
-   * @param ctx Koishi上下文
-   * @param filename 导入的文件名
-   * @param overwrite 是否覆盖现有数据
-   * @returns 导入结果
    */
   async importFromFile(ctx: Context, filename: string, overwrite = false) {
     try {
-      const dataDir = path.join(process.cwd(), 'data')
-      // 自动添加扩展名
-      if (!path.extname(filename)) {
-        if (fs.existsSync(path.join(dataDir, `${filename}.json`))) {
-          filename = `${filename}.json`;
+      const dataDir = getStatDirectory()
+      let files = []
+
+      // 处理批次组文件
+      if (filename.includes('批次组')) {
+        const batchMatch = filename.match(/(.*)-批次组\(共(\d+)个文件\)$/)
+        if (batchMatch) {
+          const [, baseFilename, totalBatches] = batchMatch
+
+          // 收集所有批次文件
+          for (let i = 1; i <= parseInt(totalBatches); i++) {
+            const batchFile = `${baseFilename}-${i}-${totalBatches}.json`
+            if (fs.existsSync(path.join(dataDir, batchFile))) {
+              files.push(batchFile)
+            }
+          }
+
+          if (files.length === 0) {
+            throw new Error(`找不到与批次组 ${filename} 相关的文件`)
+          }
+
+          ctx.logger.info(`找到${files.length}个批次文件，准备导入`)
+        } else {
+          throw new Error(`无效的批次组文件名: ${filename}`)
+        }
+      }
+      // 处理单个批次文件
+      else if (filename.match(/(.*)-(\d+)-(\d+)\.json$/)) {
+        const filePath = path.join(dataDir, filename)
+        if (fs.existsSync(filePath)) {
+          files.push(filename)
+        } else {
+          throw new Error(`找不到批次文件: ${filename}`)
+        }
+      }
+      // 处理常规单文件
+      else {
+        // 自动添加扩展名
+        const fileToCheck = !filename.endsWith('.json') ? filename + '.json' : filename
+        const filePath = path.join(dataDir, fileToCheck)
+
+        if (fs.existsSync(filePath)) {
+          files.push(fileToCheck)
+        } else {
+          throw new Error(`文件不存在: ${filename}`)
         }
       }
 
-      const filePath = path.join(dataDir, filename)
-      if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filename}`)
-
-      // 获取文件大小
-      const stats = fs.statSync(filePath)
-      const fileSizeMB = stats.size / (1024 * 1024)
-      ctx.logger.info(`导入文件大小: ${fileSizeMB.toFixed(2)}MB`)
-
-      let fileContent: string
-      try {
-        // 使用异步读取替代同步读取，更适合大文件
-        fileContent = await fs.promises.readFile(filePath, { encoding: 'utf-8' })
-
-        // 确保文件内容完整
-        if (!fileContent || fileContent.trim() === '') {
-          throw new Error('文件内容为空')
-        }
-
-        if (!fileContent.endsWith(']') && fileContent.startsWith('[')) {
-          throw new Error('JSON文件不完整，可能被截断')
-        }
-      } catch (err) {
-        throw new Error(`读取文件失败: ${err.message}`)
+      // 如果是覆盖模式，先清除数据
+      if (overwrite) {
+        await ctx.database.remove('analytics.stat', {})
+        ctx.logger.info('已清除现有统计数据')
       }
 
-      let records
-      try {
-        // 解析JSON数据
-        const parseResult = this.parseJSON(fileContent)
-        records = parseResult.validRecords
+      // 导入处理
+      let totalStats = { imported: 0, skipped: 0, errors: 0, invalidRecords: 0 }
 
-        // 打印解析结果详情
-        ctx.logger.info(`JSON解析完成: 总记录数 ${parseResult.totalRecords}, 有效记录 ${records.length}, 无效记录 ${parseResult.invalidRecords}`)
-        if (parseResult.invalidRecords > 0) {
-          ctx.logger.warn(`发现 ${parseResult.invalidRecords} 条记录缺少必要字段，这些记录将被跳过`)
+      // 依次处理每个文件
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const filePath = path.join(dataDir, file)
+
+        // 文件大小
+        const stats = fs.statSync(filePath)
+        const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2)
+        ctx.logger.info(`[${i+1}/${files.length}] 处理文件 ${file} (${fileSizeMB}MB)`)
+
+        try {
+          // 读取文件内容
+          const content = await fs.promises.readFile(filePath, 'utf-8')
+
+          if (!content || content.trim() === '') {
+            throw new Error('文件内容为空')
+          }
+
+          // 解析并导入数据
+          const { validRecords, invalidRecords } = this.parseJSON(content)
+          ctx.logger.info(`JSON解析完成: ${validRecords.length}个有效记录, ${invalidRecords}个无效记录`)
+
+          // 导入记录
+          const result = await this.importRecords(ctx, validRecords)
+
+          // 累计统计
+          totalStats.imported += result.imported
+          totalStats.skipped += result.skipped
+          totalStats.errors += result.errors
+          totalStats.invalidRecords += invalidRecords
+
+          ctx.logger.info(`文件 ${i+1}/${files.length} 导入完成: ${result.imported} 成功, ${result.skipped} 跳过, ${result.errors} 失败`)
+        } catch (err) {
+          throw new Error(`处理文件 ${file} 失败: ${err.message}`)
         }
-      } catch (err) {
-        throw new Error(`解析JSON失败: ${err.message}`)
       }
 
-      // 如果覆盖模式，先清除数据
-      if (overwrite) await ctx.database.remove('analytics.stat', {})
+      // 返回导入结果
+      let resultMsg = `成功完成全部导入: ${totalStats.imported} 条记录`
+      if (totalStats.skipped) resultMsg += `，跳过 ${totalStats.skipped} 条无效记录`
+      if (totalStats.errors) resultMsg += `，${totalStats.errors} 条导入失败`
+      if (totalStats.invalidRecords) resultMsg += `\n注意：原始文件中有 ${totalStats.invalidRecords} 条记录因缺少必要字段未被导入`
 
-      // 分批处理导入，避免一次处理过多数据导致内存问题
-      const result = await this.importRecords(ctx, records)
-      return `成功导入 ${result.imported} 条记录${result.skipped ? `，跳过 ${result.skipped} 条无效记录` : ''}${result.errors ? `，${result.errors} 条导入失败` : ''}${result.invalidCount ? `\n注意：原始文件中有 ${result.invalidCount} 条记录因缺少必要字段未被导入` : ''}`
+      return resultMsg
     } catch (e) {
       throw new Error(`导入失败: ${e.message}`)
     }
@@ -117,14 +315,13 @@ export const io = {
 
   /**
    * 导入历史数据
-   * @param ctx Koishi上下文
-   * @param overwrite 是否覆盖现有数据
    */
   async importLegacyData(ctx: Context, overwrite = false) {
     if (!ctx.database.tables['analytics.command']) {
       throw new Error('找不到历史数据表')
     }
 
+    // 获取历史记录和绑定数据
     const [records, bindings] = await Promise.all([
       ctx.database.get('analytics.command', {}),
       ctx.database.get('binding', {})
@@ -132,10 +329,14 @@ export const io = {
 
     if (!records.length) throw new Error('历史数据为空')
 
-    const userIdMap = new Map(bindings
-      .filter(b => b.aid)
-      .map(b => [b.aid.toString(), { pid: b.pid, platform: b.platform }]))
+    // 建立用户ID映射
+    const userIdMap = new Map(
+      bindings
+        .filter(b => b.aid)
+        .map(b => [b.aid.toString(), { pid: b.pid, platform: b.platform }])
+    )
 
+    // 合并相同记录
     const mergedRecords = new Map()
 
     // 如果是覆盖模式，清除现有数据
@@ -144,19 +345,19 @@ export const io = {
       ctx.logger.info('已清除现有统计数据')
     }
 
-    // 处理记录
+    // 处理每条历史记录
     records.forEach(cmd => {
       const binding = userIdMap.get(cmd.userId?.toString())
       if (!binding || !cmd.channelId) return
 
-      // 确保命令字段正确
+      // 生成唯一键并设置记录值
       const commandValue = cmd.name || 'mess_age'
-
       const key = `${binding.platform}:${cmd.channelId}:${binding.pid}:${commandValue}`
       const timestamp = new Date((cmd.date * 86400000) + ((cmd.hour || 0) * 3600000))
 
       if (isNaN(timestamp.getTime())) return
 
+      // 合并相同记录
       const curr = mergedRecords.get(key) || {
         platform: binding.platform,
         guildId: cmd.channelId,
@@ -173,35 +374,36 @@ export const io = {
       mergedRecords.set(key, curr)
     })
 
+    // 执行导入
     const batch = Array.from(mergedRecords.values())
-    // 修复: 将_importRecords改为importRecords
     const result = await this.importRecords(ctx, batch)
 
     return `导入完成：成功导入 ${result.imported} 条记录${result.errors > 0 ? `，${result.errors} 条记录失败` : ''}`
   },
 
-  // 改进的JSON解析方法，增加了对不完整记录的处理
-  parseJSON(content: string): { validRecords: StatRecord[], totalRecords: number, invalidRecords: number } {
+  /**
+   * 解析JSON数据
+   */
+  parseJSON(content: string) {
     try {
       const data = JSON.parse(content)
       if (!Array.isArray(data)) throw new Error('JSON文件必须包含记录数组')
 
-      const totalRecords = data.length
       let invalidRecords = 0
+      const validRecords = []
 
-      // 筛选出有效记录并进行标准化处理
-      const validRecords = data.reduce((acc, record) => {
-        // 检查记录是否包含所有必要字段
+      // 筛选并处理有效记录
+      for (const record of data) {
+        // 检查必要字段
         if (!record.platform || !record.guildId || !record.userId || !record.command) {
           invalidRecords++
-          return acc
+          continue
         }
 
+        // 移除ID，添加规范化记录
         const { id, ...rest } = record
-        // 添加有效记录到结果数组
-        acc.push({
+        validRecords.push({
           ...rest,
-          // 规范化字段值
           platform: rest.platform || 'unknown',
           guildId: rest.guildId || 'unknown',
           userId: rest.userId || 'unknown',
@@ -211,55 +413,52 @@ export const io = {
           count: parseInt(String(rest.count)) || 1,
           lastTime: rest.lastTime ? new Date(rest.lastTime) : new Date()
         })
-        return acc
-      }, [] as StatRecord[])
-
-      return {
-        validRecords,
-        totalRecords,
-        invalidRecords
       }
+
+      return { validRecords, totalRecords: data.length, invalidRecords }
     } catch (error) {
       throw new Error(`JSON解析错误: ${error.message}`)
     }
   },
 
-  // 改进: 导入记录方法
+  /**
+   * 导入记录到数据库
+   */
   async importRecords(ctx: Context, records: StatRecord[]) {
     let imported = 0, skipped = 0, errors = 0
     const totalRecords = records.length
-    const invalidCount = 0  // 将在parseJSON中处理，这里只处理有效记录
 
-    ctx.logger.info(`开始导入 ${totalRecords} 条有效记录`)
+    ctx.logger.info(`开始导入 ${totalRecords} 条记录`)
 
-    // 增加批处理大小，使处理更高效
+    // 批处理大小
     const batchSize = 100
 
-    // 辅助函数：处理名称
+    // 处理用户和群组名称的辅助函数
     const processName = (name: string, id: string): string => {
       if (!name) return '';
 
-      // 增强的名称清洗处理
+      // 清洗处理名称
       let cleanName = utils.sanitizeString(name);
 
-      // 如果清洗后为空或仅有无意义字符
+      // 过滤无意义名称
       if (!cleanName || /^[\s*□]+$/.test(cleanName)) return '';
 
-      // 检查名称是否与ID相同或包含ID（常见于默认名称）
+      // 如果名称与ID相同，返回空
       if (id && (cleanName === id || cleanName.includes(id))) return '';
 
       return cleanName;
     };
 
+    // 分批处理记录
     for (let i = 0; i < records.length; i += batchSize) {
       const batch = records.slice(i, i + batchSize)
-      const currentBatch = Math.floor(i / batchSize) + 1
+      const batchNum = Math.floor(i / batchSize) + 1
       const totalBatches = Math.ceil(records.length / batchSize)
 
-      ctx.logger.info(`处理批次 ${currentBatch}/${totalBatches} (${i}-${Math.min(i + batchSize, records.length)})`)
+      ctx.logger.info(`处理批次 ${batchNum}/${totalBatches} (${i}-${Math.min(i + batchSize, records.length)})`)
 
+      // 并行处理每条记录
       await Promise.all(batch.map(async record => {
-        // 尝试导入所有有效记录
         const query = {
           platform: record.platform,
           guildId: record.guildId,
@@ -268,44 +467,36 @@ export const io = {
         }
 
         try {
+          // 查询现有记录
           const [existing] = await ctx.database.get('analytics.stat', query)
 
           if (existing) {
-            // 处理 userName: 优先使用原记录非空值
-            let newUserName = '';
-            if (existing.userName && existing.userName.trim() !== '') {
-              newUserName = existing.userName;
-            } else if (record.userName !== undefined) {
-              // 加强处理用户名
-              newUserName = processName(record.userName, record.userId);
-            }
+            // 更新现有记录
+            const newUserName = existing.userName?.trim()
+              ? existing.userName
+              : processName(record.userName, record.userId);
 
-            // 处理 guildName: 优先使用原记录非空值
-            let newGuildName = '';
-            if (existing.guildName && existing.guildName.trim() !== '') {
-              newGuildName = existing.guildName;
-            } else if (record.guildName !== undefined) {
-              // 加强处理群组名
-              newGuildName = processName(record.guildName, record.guildId);
-            }
+            const newGuildName = existing.guildName?.trim()
+              ? existing.guildName
+              : processName(record.guildName, record.guildId);
 
             await ctx.database.set('analytics.stat', query, {
               count: existing.count + (record.count || 1),
-              lastTime: new Date(Math.max(existing.lastTime?.getTime() || 0, record.lastTime?.getTime() || Date.now())),
+              lastTime: new Date(Math.max(
+                existing.lastTime?.getTime() || 0,
+                record.lastTime?.getTime() || Date.now()
+              )),
               userName: newUserName,
               guildName: newGuildName
             })
           } else {
-            // 处理新记录的 userName 和 guildName
-            const newUserName = processName(record.userName, record.userId);
-            const newGuildName = processName(record.guildName, record.guildId);
-
+            // 创建新记录
             await ctx.database.create('analytics.stat', {
               ...query,
               count: record.count || 1,
               lastTime: record.lastTime || new Date(),
-              userName: newUserName,
-              guildName: newGuildName
+              userName: processName(record.userName, record.userId),
+              guildName: processName(record.guildName, record.guildId)
             })
           }
           imported++
@@ -315,12 +506,12 @@ export const io = {
         }
       }))
 
-      // 报告当前进度
+      // 定期报告进度
       if ((i + batchSize) % 1000 === 0 || i + batchSize >= records.length) {
         ctx.logger.info(`已处理 ${Math.min(i + batchSize, records.length)}/${records.length} 条记录 (${imported} 成功, ${skipped} 跳过, ${errors} 失败)`)
       }
     }
 
-    return { imported, skipped, errors, invalidCount }
+    return { imported, skipped, errors }
   }
 }
