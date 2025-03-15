@@ -1,5 +1,5 @@
 import { Context } from 'koishi'
-import { Config, StatRecord } from './index'
+import { StatRecord } from './index'
 import { utils } from './utils'
 
 /**
@@ -43,7 +43,6 @@ export const database = {
       return
     }
 
-    // 设置默认命令值
     data.command ||= 'mess_age'
 
     try {
@@ -64,7 +63,6 @@ export const database = {
           count: existing.count + 1,
           lastTime: new Date()
         }
-
         // 只在有新值时更新用户名和群组名
         if (userName !== undefined) updateData.userName = userName
         if (guildName !== undefined) updateData.guildName = guildName
@@ -97,19 +95,23 @@ export const database = {
     guildId?: string
     command?: string
   }) {
-    // 检查是否有任何过滤条件
+
     if (!Object.values(options).some(Boolean)) {
+      ctx.logger.info('正在删除所有统计记录并重建数据表...')
       await ctx.database.drop('analytics.stat')
       await database.initialize(ctx)
+      ctx.logger.info('已删除所有统计记录')
       return -1
     }
 
-    // 简化查询构建逻辑，直接过滤掉假值
     const query = Object.fromEntries(
       Object.entries(options).filter(([_, value]) => Boolean(value))
     )
 
+    ctx.logger.info(`正在删除统计记录...`)
     const result = await ctx.database.remove('analytics.stat', query)
+    ctx.logger.info(`已删除${result}条统计记录`)
+
     return Number(result ?? 0)
   }
 }

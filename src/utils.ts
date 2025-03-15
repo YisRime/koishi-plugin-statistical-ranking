@@ -141,7 +141,6 @@ export const utils = {
       .replace(/[\<\>\`\$\(\)\[\]\{\}\;\'\"\\\=]/g, '*')
       // 规范化空格
       .replace(/\s+/g, ' ').trim()
-
     // 限制长度
     return result.length > 64 ? result.slice(0, 61) + '...' : result
   },
@@ -178,11 +177,9 @@ export const utils = {
 
     // 记录名称映射
     const nameMap = new Map<string, string>()
-
     // 处理每条记录
     for (const record of filteredRecords) {
       stats.add(record[aggregateKey] as string, record.count, record.lastTime)
-
       // 保存名称映射
       if ((aggregateKey === 'userId' && record.userName) ||
           (aggregateKey === 'guildId' && record.guildName)) {
@@ -190,7 +187,6 @@ export const utils = {
           record[aggregateKey === 'userId' ? 'userName' : 'guildName'])
       }
     }
-
     // 排序并过滤记录
     let entries = stats.sortedEntries(sortBy)
 
@@ -227,12 +223,10 @@ export const utils = {
     if (!skipPaging && totalPages > 1) {
       formattedTitle = `${title.endsWith(' ——') ? title.substring(0, title.length - 3) : title}（第${currentPage}/${totalPages}页）——`
     }
-
-    // 固定宽度设置
-    const countWidth = 6     // 计数固定宽度
-    const timeWidth = 10     // 时间固定宽度
-    const nameWidth = 18     // 名称固定宽度
-
+    // 固定宽度
+    const countWidth = 6
+    const timeWidth = 10
+    const nameWidth = 18
     // 生成显示项
     const items = pagedEntries.map(([key, {count, lastTime}]) => {
       // 获取显示名称
@@ -240,18 +234,15 @@ export const utils = {
       if (truncateId) {
         displayName = nameMap.has(key) ? (displayName || key) : key
       }
-
       // 格式化显示内容
       const truncatedName = this.truncateByDisplayWidth(displayName, nameWidth)
       const countStr = count.toString() + (aggregateKey === 'command' ? '次' : '条')
       const truncatedCount = this.truncateByDisplayWidth(countStr, countWidth)
       const timeAgo = this.formatTimeAgo(lastTime)
       const truncatedTime = this.truncateByDisplayWidth(timeAgo, timeWidth)
-
       // 计算填充
       const namePadding = ' '.repeat(Math.max(0, nameWidth - this.getStringDisplayWidth(truncatedName)))
       const countPadding = ' '.repeat(Math.max(0, countWidth - this.getStringDisplayWidth(truncatedCount)))
-
       // 返回格式化的行
       return `${truncatedName}${namePadding} ${countPadding}${truncatedCount} ${truncatedTime}`
     })
@@ -339,12 +330,10 @@ export const utils = {
   async handleStatQuery(ctx: Context, options: QueryOptions, type: 'command' | 'user' | 'guild') {
     const query: Record<string, any> = {}
     const typeMap = { command: '命令', user: '发言', guild: '群组' }
-
     // 构建查询条件
     if (options.user) query.userId = options.user
     if (options.guild) query.guildId = options.guild
     if (options.platform) query.platform = options.platform
-
     // 根据类型设置额外条件
     if (type === 'user') {
       query.command = 'mess_age'
@@ -353,11 +342,9 @@ export const utils = {
     } else if (options.command) {
       query.command = options.command
     }
-
     // 执行查询
     const records = await ctx.database.get('analytics.stat', query)
     if (!records?.length) return '未找到记录'
-
     // 构建标题
     const conditions = Object.entries({
       user: ['用户', options.user],

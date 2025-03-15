@@ -7,11 +7,6 @@ import { utils } from './utils'
  * @packageDocumentation
  * 统计与排名插件 - 用于统计和分析用户命令使用情况与活跃度
  */
-
-/**
- * 插件名称及依赖配置
- * @public
- */
 export const name = 'statistical-ranking'
 export const inject = ['database']
 
@@ -36,7 +31,6 @@ export interface Config {
 
 /**
  * 插件配置模式
- * 使用 Schema.intersect 组合多个配置块
  */
 export const Config = Schema.intersect([
   Schema.object({
@@ -160,14 +154,12 @@ export async function apply(ctx: Context, config: Config) {
   const stat = ctx.command('stat', '查看统计信息')
     .action(async ({ session }) => {
       if (!session?.userId || !session?.platform) return '无法获取您的用户信息'
-
       // 获取用户完整信息
       const userInfo = await utils.getSessionInfo(session)
       if (!userInfo) return '无法获取您的用户信息'
-
       // 查询当前用户的统计数据
       const options = { user: userInfo.userId, platform: userInfo.platform }
-      const result = await utils.handleStatQuery(ctx, options, 'user')
+      const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
 
       const processed = await utils.processStatRecords(result.records, 'command', {
@@ -181,7 +173,6 @@ export async function apply(ctx: Context, config: Config) {
       return processed.title + '\n' + processed.items.join('\n')
     })
 
-  // 将原stat命令的功能移动到stat.command子命令中
   stat.subcommand('.command [arg:string]', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
@@ -332,28 +323,28 @@ export async function apply(ctx: Context, config: Config) {
 
   if (config.enableExport) {
     stat.subcommand('.export', '导出统计数据', { authority: 4 })
-      .option('csv', '-C 使用CSV格式导出')
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
       .option('guild', '-g [guild:string] 指定群组')
       .option('cmd', '-c [command:string] 指定命令')
-      .option('batch', '-b [size:number] 设置每批数据量', { fallback: 200 })
       .action(async ({ options, session }) => {
         try {
+          if (Object.values(options).some(Boolean)) {
+            await session.send('正在导出...')
+          }
+
           const result = await io.exportToFile(ctx, 'stat-export', {
             userId: options.user,
             platform: options.platform,
             guildId: options.guild,
-            command: options.cmd,
-            batchSize: options.batch
+            command: options.cmd
           })
 
           if (result.batches === 1) {
-            return `成功导出 ${result.count} 条记录到 ${result.files[0].filename}`
+            return `导出成功（${result.count}条）：\n- ${result.files[0].filename}`
           } else {
-            await session.send(`数据量较大，已分 ${result.batches} 批导出 ${result.count} 条记录:`)
-            const fileList = result.files.map(f => `- ${f.filename} (${f.count}条记录)`).join('\n')
-            return fileList
+            const fileList = result.files.map(f => `- ${f.filename}`).join('\n')
+            return `导出成功（${result.count}条）：\n${fileList}`
           }
         } catch (e) {
           return `导出失败：${e.message}`
@@ -369,78 +360,39 @@ export async function apply(ctx: Context, config: Config) {
         try {
           // 从历史数据库导入
           if (options.database) {
-            session.send('开始从历史数据导入，这可能需要一段时间，请稍候...')
+            session.send('正在导入历史记录...')
             try {
               const result = await io.importLegacyData(ctx, options.force)
               return `${result}`
             } catch (e) {
               if (e.message.includes('找不到历史数据表')) {
-                return '历史数据表不存在，无法从数据库导入'
+                return '历史数据表不存在'
               }
               throw e
             }
           }
-
           // 获取可导入文件列表
-          const { files, fileInfo } = await io.listImportFiles(ctx)
+          const { files } = await io.listImportFiles(ctx)
           if (!files.length) {
-            return '没有找到可导入的文件。请确保在data/stat目录下有JSON格式的统计数据文件。'
+            return '未找到可导入的文件'
           }
-
-          // 如果有参数但不是数字，视为文件名直接导入
+          // 使用序号选择文件导入
           const selector = args[0]
-          if (selector && isNaN(parseInt(selector))) {
-            // 检查文件是否存在
-            if (!files.some(f => f === selector)) {
-              // 尝试模糊匹配，找到包含输入名称的文件
-              const matchFiles = files.filter(f => f.includes(selector))
-              if (matchFiles.length > 0) {
-                return `未找到精确匹配的文件: ${selector}\n您是否要导入以下文件之一?\n${matchFiles.map((f, i) => `${i+1}. ${f}`).join('\n')}`
-              }
-              return `未找到文件: ${selector}\n可用文件列表:\n${files.map((f, i) => `${i+1}. ${f}`).join('\n')}`
-            }
-
-            // 如果选择的是批次组文件，确认是否导入所有批次
-            if (selector.includes('批次组')) {
-              await session.send(`您选择的是批次组文件 ${selector}，将导入该组中的所有批次文件。`)
-            }
-
-            session.send(`开始导入文件 ${selector}${options.force ? ' (覆盖模式)' : ''}，这可能需要一段时间，请稍候...`)
+          if (selector) {
+            // 处理导入
+            await session.send(`正在${options.force ? '覆盖' : ''}导入...`)
             const result = await io.importFromFile(ctx, selector, options.force)
             return result
           }
-
-          // 如果提供了有效序号，导入对应文件
-          if (selector) {
-            const index = parseInt(selector) - 1
-            if (index >= 0 && index < files.length) {
-              const selectedFile = files[index]
-
-              // 如果选择的是批次组文件，确认是否导入所有批次
-              if (selectedFile.includes('批次组')) {
-                await session.send(`您选择的是批次组文件 ${selectedFile}，将导入该组中的所有批次文件。`)
-              }
-
-              session.send(`开始导入文件 ${selectedFile}${options.force ? ' (覆盖模式)' : ''}，这可能需要一段时间，请稍候...`)
-              const result = await io.importFromFile(ctx, selectedFile, options.force)
-              return result
-            } else {
-              return `无效的文件序号，请输入1-${files.length}之间的数字`
-            }
-          }
-
-          // 显示文件列表，突出显示批次组
+          // 显示文件列表
           const fileList = files.map((file, index) => {
-            const info = fileInfo[file]
-            const prefix = file.includes('批次组') ? '📦 ' : '📄 '
-            const size = info?.size || 'unknown'
-            const time = info?.mtime || 'unknown'
-            return `${index + 1}. ${prefix}${file} (${size}, ${time})`
+            const prefix = file.includes('批次组') ? '📦' : '📄'
+            return `${index + 1}.${prefix}${file}`
           }).join('\n')
 
-          return `请选择要导入的文件序号:\n${fileList}\n\n使用命令: stat.import <序号|文件名> [-f] 进行导入\n使用-f参数可覆盖现有数据\n📦 表示批次组文件，选择后将导入该组所有批次文件`
+          return `使用 import [序号](-[文件]) 导入对应文件：\n${fileList}`
         } catch (e) {
-          ctx.logger.error(`导入失败: ${e.message}`, e.stack)
+          ctx.logger.error(`导入失败: ${e.message}`)
           return `导入失败：${e.message}`
         }
       })
