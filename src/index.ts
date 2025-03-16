@@ -150,52 +150,65 @@ export async function apply(ctx: Context, config: Config) {
 
   const stat = ctx.command('stat [arg:string]', '查看个人统计信息')
     .action(async ({ session, args }) => {
-      // 获取用户完整信息
+      // 获取用户信息和解析参数
       const userInfo = await utils.getSessionInfo(session)
-      const options = { userId: userInfo.userId, platform: userInfo.platform }
-      const records = await ctx.database.get('analytics.stat', options)
-      if (!records?.length) return '未找到记录'
-      // 解析参数
       const arg = args[0]?.toLowerCase()
-      let page = 1
-      let showAll = false
-      if (arg === 'all') {
-        showAll = true
-      } else if (arg && /^\d+$/.test(arg)) {
-        page = parseInt(arg)
-      }
-      // 分类记录
-      const messageRecords = records.filter(r => r.command === '_message')
-      const commandRecords = records.filter(r => r.command !== '_message')
-      const totalMessages = messageRecords.reduce((sum, r) => sum + r.count, 0)
-      // 生成标题
-      const title = `${userInfo.userName || userInfo.userId}的统计（总计${totalMessages}条） —`
-      // 命令统计部分
-      const commandResult = await utils.processStatRecords(commandRecords, 'command', {
-        sortBy: 'count',
-        disableCommandMerge: false,
-        skipPaging: showAll,
-        page: page,
-        pageSize: 8,
-      })
-      // 群组统计部分
-      const guildResult = await utils.processStatRecords(messageRecords, 'guildId', {
-        sortBy: 'count',
-        truncateId: true,
-        skipPaging: showAll,
-        page: page,
-        pageSize: 8,
-      })
-      // 格式化输出
-      let result = `${title}\n`
-      if (commandResult.items.length > 0) {
-        result += `${commandResult.title}\n${commandResult.items.join('\n')}`
-      }
-      if (guildResult.items.length > 0) {
-        result += `${guildResult.title}\n${guildResult.items.join('\n')}`
-      }
+      let page = arg && /^\d+$/.test(arg) ? parseInt(arg) : 1
+      const showAll = arg === 'all'
 
-      return result
+      const result = await utils.handleStatQuery(ctx, {
+        user: userInfo.userId,
+        platform: userInfo.platform
+      }, 'user')
+      if (typeof result === 'string') return result
+      // 分类记录
+      const messageRecords = []
+      const commandRecords = []
+      let totalMessages = 0
+      for (const record of result.records) {
+        if (record.command === '_message') {
+          messageRecords.push(record)
+          totalMessages += record.count
+        } else {
+          commandRecords.push(record)
+        }
+      }
+      // 合并处理统计数据
+      const pageSize = 8
+      const allItems = []
+      // 处理命令统计
+      if (commandRecords.length > 0) {
+        const commandResult = await utils.processStatRecords(commandRecords, 'command', {
+          sortBy: 'count',
+          disableCommandMerge: false,
+          skipPaging: true,
+          title: '命令统计'
+        })
+        allItems.push(...commandResult.items.map(item => ({ type: 'command', content: item })))
+      }
+      // 处理群组统计
+      if (messageRecords.length > 0) {
+        const guildResult = await utils.processStatRecords(messageRecords, 'guildId', {
+          sortBy: 'count',
+          truncateId: true,
+          skipPaging: true,
+          title: '群组统计'
+        })
+        allItems.push(...guildResult.items.map(item => ({ type: 'guild', content: item })))
+      }
+      // 计算分页
+      const totalPages = Math.ceil(allItems.length / pageSize) || 1
+      const validPage = Math.min(Math.max(1, page), totalPages)
+      // 获取当前页数据
+      const startIdx = showAll ? 0 : (validPage - 1) * pageSize
+      const endIdx = showAll ? allItems.length : Math.min(startIdx + pageSize, allItems.length)
+      const pagedItems = allItems.slice(startIdx, endIdx)
+      // 生成标题和结果
+      const pageInfo = showAll ? '' : `（第${validPage}/${totalPages}页）`
+      const userName = userInfo.userName || userInfo.userId
+      const title = `${userName}的统计（总计${totalMessages}条）${pageInfo} ——`
+      // 格式化输出
+      return title + '\n' + pagedItems.map(item => item.content).join('\n')
     })
 
   stat.subcommand('.command [arg:string]', '查看命令统计')
