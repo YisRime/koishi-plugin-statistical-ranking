@@ -2,13 +2,17 @@ import { Context, Schema } from 'koishi'
 import { database } from './database'
 import { io } from './io'
 import { utils } from './utils'
+import { Renderer, RendererConfig } from './render'
 
 /**
  * @packageDocumentation
  * 统计与排名插件 - 用于统计和分析用户命令使用情况与活跃度
  */
 export const name = 'statistical-ranking'
-export const inject = ['database']
+export const inject = {
+  required: ['database'],
+  optional: ['puppeteer']
+}
 
 /**
  * 插件配置接口
@@ -18,6 +22,8 @@ export const inject = ['database']
  * @property {boolean} [enableDisplayFilter] - 是否启用显示过滤功能
  * @property {string[]} [displayBlacklist] - 显示过滤黑名单
  * @property {string[]} [displayWhitelist] - 显示过滤白名单
+ * @property {boolean} [enableImageRender] - 是否启用图片渲染
+ * @property {RendererConfig} [renderer] - 图像渲染器配置
  */
 export interface Config {
   enableDataTransfer?: boolean
@@ -25,6 +31,8 @@ export interface Config {
   enableDisplayFilter?: boolean
   displayBlacklist?: string[]
   displayWhitelist?: string[]
+  enableImageRender?: boolean
+  renderer?: RendererConfig
 }
 
 /**
@@ -34,24 +42,35 @@ export const Config = Schema.intersect([
   Schema.object({
     enableClear: Schema.boolean().default(true).description('启用统计数据清除'),
     enableDataTransfer: Schema.boolean().default(true).description('启用统计数据导入导出'),
+    enableImageRender: Schema.boolean().default(false).description('启用图片渲染'),
     enableDisplayFilter: Schema.boolean().default(false).description('启用显示过滤'),
   }).description('基础配置'),
   Schema.union([
     Schema.object({
+      enableImageRender: Schema.const(true).required(),
+      renderer: Schema.object({
+        theme: Schema.union(['light', 'dark']).default('light').description('渲染主题'),
+        showAvatar: Schema.boolean().default(true).description('显示用户头像'),
+        width: Schema.number().default(800).description('图像宽度（像素）'),
+        timeout: Schema.number().default(10).description('渲染超时（秒）')
+      }).description('图片渲染配置')
+    }),
+  ]),
+  Schema.union([
+    Schema.object({
       enableDisplayFilter: Schema.const(true).required(),
       displayWhitelist: Schema.array(Schema.string())
-        .description('显示白名单，仅展示这些统计记录（先于黑名单生效）')
+        .description('白名单，仅展示这些统计记录（先于黑名单生效）')
         .default([]),
       displayBlacklist: Schema.array(Schema.string())
-        .description('显示黑名单，将不会默认展示以下命令/用户/群组/平台')
+        .description('黑名单，将不会默认展示以下命令/用户/群组/平台')
         .default([
           'onebot:12345:67890',
           'qq::12345',
           'sandbox::',
           '.help',
         ]),
-    }),
-    Schema.object({}),
+    }).description('显示过滤配置'),
   ]),
 ])
 
@@ -131,12 +150,19 @@ interface BindingRecord {
  * - 设置数据库结构
  * - 注册事件监听器
  * - 注册指令
+ * - 初始化渲染器
  *
  * @param ctx - Koishi应用上下文
  * @param config - 插件配置对象
  */
 export async function apply(ctx: Context, config: Config) {
+
   database.initialize(ctx)
+  const rendererConfig = {
+    ...config.renderer,
+    enabled: config.enableImageRender
+  }
+  const renderer = Renderer.create(ctx, rendererConfig)
 
   /**
    * 处理消息和命令记录
@@ -156,11 +182,22 @@ export async function apply(ctx: Context, config: Config) {
   ctx.on('message', (session) => handleRecord(session, null))
 
   /**
+   * 根据配置和选项确定是否使用文本模式
+   * @param options 命令选项
+   * @returns 是否使用文本模式
+   */
+  const OutputMode = (options: any) => {
+    if (options.negate) return config.enableImageRender
+    return !config.enableImageRender
+  }
+
+  /**
    * 主统计命令
    * 用于查看用户的个人统计信息
    */
   const stat = ctx.command('stat [arg:string]', '查看个人统计信息')
-    .action(async ({ session, args }) => {
+    .option('negate', '-n 切换输出模式（图片/文本）')
+    .action(async ({ session, args, options }) => {
       // 获取用户信息和解析参数
       const userInfo = await utils.getSessionInfo(session)
       const arg = args[0]?.toLowerCase()
@@ -218,8 +255,18 @@ export async function apply(ctx: Context, config: Config) {
       const pageInfo = (showAll || totalPages <= 1) ? '' : `（第${validPage}/${totalPages}页）`;
       const userName = userInfo.userName || userInfo.userId;
       const title = `${userName}的统计（共${totalMessages}条）${pageInfo} ——`;
-      // 格式化输出
-      return title + '\n' + pagedItems.map(item => item.content).join('\n');
+      // 获取渲染内容
+      const items = pagedItems.map(item => item.content);
+      // 根据选项和配置决定输出方式
+      if (OutputMode(options)) {
+        return title + '\n' + items.join('\n');
+      } else {
+        return await renderer.renderResult(title, items, {
+          userName,
+          session,
+          fallbackToText: true
+        });
+      }
     })
 
   /**
@@ -230,7 +277,8 @@ export async function apply(ctx: Context, config: Config) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({options, args}) => {
+    .option('negate', '-n 切换输出模式（图片/文本）')
+    .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -242,6 +290,7 @@ export async function apply(ctx: Context, config: Config) {
 
       const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
+
       const processed = await utils.processStatRecords(result.records, 'command', {
         sortBy: 'count',
         disableCommandMerge: showAll,
@@ -252,8 +301,15 @@ export async function apply(ctx: Context, config: Config) {
         title: result.title,
         skipPaging: showAll
       })
-
-      return processed.title + '\n' + processed.items.join('\n')
+      // 根据选项和配置决定输出方式
+      if (OutputMode(options)) {
+        return processed.title + '\n' + processed.items.join('\n');
+      } else {
+        return await renderer.renderResult(processed.title, processed.items, {
+          session,
+          fallbackToText: true
+        });
+      }
     })
 
   /**
@@ -263,7 +319,8 @@ export async function apply(ctx: Context, config: Config) {
   stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({options, args}) => {
+    .option('negate', '-n 切换输出模式（图片/文本）')
+    .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -275,6 +332,7 @@ export async function apply(ctx: Context, config: Config) {
 
       const result = await utils.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
+
       const processed = await utils.processStatRecords(result.records, 'userId', {
         sortBy: 'count',
         truncateId: true,
@@ -285,8 +343,15 @@ export async function apply(ctx: Context, config: Config) {
         title: result.title,
         skipPaging: showAll
       })
-
-      return processed.title + '\n' + processed.items.join('\n')
+      // 根据选项和配置决定输出方式
+      if (OutputMode(options)) {
+        return processed.title + '\n' + processed.items.join('\n');
+      } else {
+        return await renderer.renderResult(processed.title, processed.items, {
+          session,
+          fallbackToText: true
+        });
+      }
     })
 
   /**
@@ -297,7 +362,8 @@ export async function apply(ctx: Context, config: Config) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
-    .action(async ({options, args}) => {
+    .option('negate', '-n 切换输出模式（图片/文本）')
+    .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -309,6 +375,7 @@ export async function apply(ctx: Context, config: Config) {
 
       const result = await utils.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
+
       const processed = await utils.processStatRecords(result.records, 'guildId', {
         sortBy: 'count',
         truncateId: true,
@@ -319,8 +386,15 @@ export async function apply(ctx: Context, config: Config) {
         title: result.title,
         skipPaging: showAll
       })
-
-      return processed.title + '\n' + processed.items.join('\n')
+      // 根据选项和配置决定输出方式
+      if (OutputMode(options)) {
+        return processed.title + '\n' + processed.items.join('\n');
+      } else {
+        return await renderer.renderResult(processed.title, processed.items, {
+          session,
+          fallbackToText: true
+        });
+      }
     })
 
   /**

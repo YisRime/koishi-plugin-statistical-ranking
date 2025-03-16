@@ -125,7 +125,7 @@ export const utils = {
    * @returns {string} 格式化后的时间字符串
    */
   formatTimeAgo(date: Date): string {
-    if (!date?.getTime()) return '未知时间'
+    if (!date?.getTime?.()) return '未知时间'
     const diff = Date.now() - date.getTime()
     if (Math.abs(diff) < 3000) return (diff < 0 ? '一会后' : '一会前')
 
@@ -145,7 +145,7 @@ export const utils = {
       const [primaryDiv, primaryUnit] = units[i]
       if (absDiff < primaryDiv) continue
       const primaryVal = Math.floor(absDiff / primaryDiv)
-      // 计算次要单位
+
       if (i < units.length - 1) {
         const [secondaryDiv, secondaryUnit] = units[i + 1]
         const remainder = absDiff % primaryDiv
@@ -232,7 +232,7 @@ export const utils = {
       ? `${title.endsWith(' ——') ? title.slice(0, -3) : title}（第${currentPage}/${totalPages}页）——`
       : title;
 
-    const countWidth = 6, timeWidth = 10, nameWidth = 16;
+    const countWidth = 5, timeWidth = 10, nameWidth = 15;
     // 使用Unicode中Braille空白符(U+2800)代替普通空格进行占位
     const padChar = '\u2800';
 
@@ -309,7 +309,7 @@ export const utils = {
     if (!session) return null
 
     const platform = session.platform
-    const guildId = session.guildId || session.groupId || session.channelId
+    const guildId = session.guildId || session.groupId || session.channelId || 'private'
     const userId = await this.getPlatformId(session)
     const bot = session.bot
 
