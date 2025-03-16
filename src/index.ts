@@ -137,6 +137,13 @@ interface BindingRecord {
  */
 export async function apply(ctx: Context, config: Config) {
   database.initialize(ctx)
+
+  /**
+   * 处理消息和命令记录
+   * @param {any} session - 会话对象
+   * @param {string} [command] - 命令名称，为空时表示普通消息
+   * @returns {Promise<void>}
+   */
   const handleRecord = async (session: any, command?: string) => {
     const info = await utils.getSessionInfo(session)
     if (!info) return
@@ -148,6 +155,10 @@ export async function apply(ctx: Context, config: Config) {
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
   ctx.on('message', (session) => handleRecord(session, null))
 
+  /**
+   * 主统计命令
+   * 用于查看用户的个人统计信息
+   */
   const stat = ctx.command('stat [arg:string]', '查看个人统计信息')
     .action(async ({ session, args }) => {
       // 获取用户信息和解析参数
@@ -155,62 +166,66 @@ export async function apply(ctx: Context, config: Config) {
       const arg = args[0]?.toLowerCase()
       let page = arg && /^\d+$/.test(arg) ? parseInt(arg) : 1
       const showAll = arg === 'all'
-
-      const result = await utils.handleStatQuery(ctx, {
-        user: userInfo.userId,
-        platform: userInfo.platform
-      }, 'user')
-      if (typeof result === 'string') return result
-      // 分类记录
-      const messageRecords = []
-      const commandRecords = []
-      let totalMessages = 0
-      for (const record of result.records) {
-        if (record.command === '_message') {
-          messageRecords.push(record)
-          totalMessages += record.count
-        } else {
-          commandRecords.push(record)
-        }
+      // 获取命令统计和群组统计
+      const [commandResult, messageResult] = await Promise.all([
+        // 命令统计查询
+        utils.handleStatQuery(ctx, {
+          user: userInfo.userId,
+          platform: userInfo.platform
+        }, 'command'),
+        // 消息统计查询
+        utils.handleStatQuery(ctx, {
+          user: userInfo.userId,
+          platform: userInfo.platform,
+          command: '_message'
+        }, 'guild')
+      ]);
+      // 计算消息总数
+      let totalMessages = 0;
+      if (typeof messageResult !== 'string') {
+        totalMessages = messageResult.records.reduce((sum, record) => sum + record.count, 0);
       }
-      // 合并处理统计数据
-      const pageSize = 8
-      const allItems = []
+      const allItems = [];
       // 处理命令统计
-      if (commandRecords.length > 0) {
-        const commandResult = await utils.processStatRecords(commandRecords, 'command', {
+      if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
+        const processedCommands = await utils.processStatRecords(commandResult.records, 'command', {
           sortBy: 'count',
           disableCommandMerge: false,
           skipPaging: true,
           title: '命令统计'
-        })
-        allItems.push(...commandResult.items.map(item => ({ type: 'command', content: item })))
+        });
+        allItems.push(...processedCommands.items.map(item => ({ type: 'command', content: item })));
       }
       // 处理群组统计
-      if (messageRecords.length > 0) {
-        const guildResult = await utils.processStatRecords(messageRecords, 'guildId', {
+      if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
+        const processedGroups = await utils.processStatRecords(messageResult.records, 'guildId', {
           sortBy: 'count',
           truncateId: true,
           skipPaging: true,
           title: '群组统计'
-        })
-        allItems.push(...guildResult.items.map(item => ({ type: 'guild', content: item })))
+        });
+        allItems.push(...processedGroups.items.map(item => ({ type: 'guild', content: item })));
       }
       // 计算分页
-      const totalPages = Math.ceil(allItems.length / pageSize) || 1
-      const validPage = Math.min(Math.max(1, page), totalPages)
+      const pageSize = 8;
+      const totalPages = Math.ceil(allItems.length / pageSize) || 1;
+      const validPage = Math.min(Math.max(1, page), totalPages);
       // 获取当前页数据
-      const startIdx = showAll ? 0 : (validPage - 1) * pageSize
-      const endIdx = showAll ? allItems.length : Math.min(startIdx + pageSize, allItems.length)
-      const pagedItems = allItems.slice(startIdx, endIdx)
-      // 生成标题和结果
-      const pageInfo = showAll ? '' : `（第${validPage}/${totalPages}页）`
-      const userName = userInfo.userName || userInfo.userId
-      const title = `${userName}的统计（总计${totalMessages}条）${pageInfo} ——`
+      const startIdx = showAll ? 0 : (validPage - 1) * pageSize;
+      const endIdx = showAll ? allItems.length : Math.min(startIdx + pageSize, allItems.length);
+      const pagedItems = allItems.slice(startIdx, endIdx);
+      // 生成标题
+      const pageInfo = (showAll || totalPages <= 1) ? '' : `（第${validPage}/${totalPages}页）`;
+      const userName = userInfo.userName || userInfo.userId;
+      const title = `${userName}的统计（共${totalMessages}条）${pageInfo} ——`;
       // 格式化输出
-      return title + '\n' + pagedItems.map(item => item.content).join('\n')
+      return title + '\n' + pagedItems.map(item => item.content).join('\n');
     })
 
+  /**
+   * 命令统计子命令
+   * 用于查看特定命令的使用统计
+   */
   stat.subcommand('.command [arg:string]', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
@@ -241,6 +256,10 @@ export async function apply(ctx: Context, config: Config) {
       return processed.title + '\n' + processed.items.join('\n')
     })
 
+  /**
+   * 用户统计子命令
+   * 用于查看特定用户的发言统计
+   */
   stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
@@ -270,6 +289,10 @@ export async function apply(ctx: Context, config: Config) {
       return processed.title + '\n' + processed.items.join('\n')
     })
 
+  /**
+   * 群组统计子命令
+   * 用于查看特定群组的发言统计
+   */
   stat.subcommand('.guild [arg:string]', '查看群组统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
@@ -300,6 +323,10 @@ export async function apply(ctx: Context, config: Config) {
       return processed.title + '\n' + processed.items.join('\n')
     })
 
+  /**
+   * 列表查看子命令
+   * 用于查看所有用户或群组列表
+   */
   stat.subcommand('.list', '查看类型列表', { authority: 3 })
     .option('user', '-u 显示用户列表')
     .option('guild', '-g 显示群组列表')
@@ -307,38 +334,24 @@ export async function apply(ctx: Context, config: Config) {
       const records = await ctx.database.get('analytics.stat', {})
       if (!records?.length) return '未找到记录'
 
-      const formatList = (key: keyof StatRecord, title: string) => {
-        const uniqueKeys = utils.getUniqueKeys(records, key)
-
-        if (key === 'command') {
-          const commands = uniqueKeys.filter(cmd => cmd !== '_message')
-          return commands.length ? `${title} ——\n${commands.join(', ')}` : null
-        } else if (key === 'userId' || key === 'guildId') {
-          const items = uniqueKeys.map(id => {
-            const record = records.find(r => r[key] === id)
-            const name = key === 'userId' ? record?.userName : record?.guildName
-            return name ? `${name} (${id})` : id
-          })
-          return items.length ? `${title} ——\n${items.join(', ')}` : null
-        }
-
-        return uniqueKeys.length ? `${title} ——\n${uniqueKeys.join(', ')}` : null
-      }
-
       const hasParams = options.user || options.guild
       const parts: (string | null)[] = []
 
       if (!hasParams) {
-        parts.push(formatList('platform', '平台列表'))
-        parts.push(formatList('command', '命令列表'))
+        parts.push(utils.formatList(records, 'platform', '平台列表'))
+        parts.push(utils.formatList(records, 'command', '命令列表'))
       }
-      if (options.user) parts.push(formatList('userId', '用户列表'))
-      if (options.guild) parts.push(formatList('guildId', '群组列表'))
+      if (options.user) parts.push(utils.formatList(records, 'userId', '用户列表'))
+      if (options.guild) parts.push(utils.formatList(records, 'guildId', '群组列表'))
 
       return parts.filter(Boolean).join('\n')
     })
 
   if (config.enableClear) {
+    /**
+     * 统计数据清除子命令
+     * 用于清除特定条件下的统计数据
+     */
     stat.subcommand('.clear', '清除统计数据', { authority: 4 })
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
@@ -369,6 +382,10 @@ export async function apply(ctx: Context, config: Config) {
   }
 
   if (config.enableDataTransfer) {
+    /**
+     * 统计数据导出子命令
+     * 用于导出特定条件下的统计数据到文件
+     */
     stat.subcommand('.export', '导出统计数据', { authority: 4 })
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
@@ -398,6 +415,10 @@ export async function apply(ctx: Context, config: Config) {
         }
       })
 
+    /**
+     * 统计数据导入子命令
+     * 用于从文件导入统计数据或从历史数据库导入
+     */
     stat.subcommand('.import [selector:number]', '导入统计数据', { authority: 4 })
       .option('force', '-f 覆盖现有数据')
       .option('database', '-d 从历史数据库导入')

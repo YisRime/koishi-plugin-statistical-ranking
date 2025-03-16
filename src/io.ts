@@ -4,7 +4,10 @@ import { utils } from './utils'
 import * as fs from 'fs'
 import * as path from 'path'
 
-// 获取统计数据目录
+/**
+ * 获取统计数据目录，如果目录不存在则创建
+ * @returns {string} 统计数据目录的绝对路径
+ */
 function getStatDirectory(): string {
   const statDir = path.join(process.cwd(), 'data', 'stat')
   if (!fs.existsSync(statDir)) {
@@ -13,8 +16,23 @@ function getStatDirectory(): string {
   return statDir
 }
 
+/**
+ * 统计数据导入导出工具集
+ */
 export const io = {
-  // 导出统计数据到文件
+  /**
+   * 导出统计数据到文件
+   * @param {Context} ctx Koishi 上下文
+   * @param {string} filename 文件名（不含扩展名）
+   * @param {Object} options 导出选项
+   * @param {string} [options.userId] 筛选特定用户ID
+   * @param {string} [options.platform] 筛选特定平台
+   * @param {string} [options.guildId] 筛选特定群组ID
+   * @param {string} [options.command] 筛选特定命令
+   * @param {number} [options.batchSize] 批处理大小，默认为200条/批
+   * @returns {Promise<{count: number, batches: number, files: Array<{count: number, path: string, filename: string, batch: number, totalBatches: number}>}>} 导出结果
+   * @throws {Error} 导出失败时抛出错误
+   */
   async exportToFile(ctx: Context, filename: string, options: {
     userId?: string, platform?: string, guildId?: string, command?: string, batchSize?: number
   }) {
@@ -63,7 +81,11 @@ export const io = {
     return { count: totalRecords, batches, files: exportFiles }
   },
 
-  // 列出可导入的文件
+  /**
+   * 列出可导入的统计数据文件
+   * @param {Context} ctx Koishi 上下文
+   * @returns {Promise<{files: string[], fileInfo: Record<string, any>}>} 文件列表和详细信息
+   */
   async listImportFiles(ctx: Context) {
     try {
       const files = await fs.promises.readdir(getStatDirectory())
@@ -144,7 +166,14 @@ export const io = {
     }
   },
 
-  // 从文件导入统计数据
+  /**
+   * 从文件导入统计数据
+   * @param {Context} ctx Koishi 上下文
+   * @param {string} filename 文件名或文件组标识
+   * @param {boolean} [overwrite=false] 是否覆盖现有数据
+   * @returns {Promise<string>} 导入结果消息
+   * @throws {Error} 导入失败时抛出错误
+   */
   async importFromFile(ctx: Context, filename: string, overwrite = false) {
     const dataDir = getStatDirectory()
     let files = []
@@ -215,7 +244,13 @@ export const io = {
     }
   },
 
-  // 导入历史数据
+  /**
+   * 从 analytics 插件导入历史数据
+   * @param {Context} ctx Koishi 上下文
+   * @param {boolean} [overwrite=false] 是否覆盖现有数据
+   * @returns {Promise<string>} 导入结果消息
+   * @throws {Error} 导入失败时抛出错误
+   */
   async importLegacyData(ctx: Context, overwrite = false) {
     if (!ctx.database.tables['analytics.command']) {
       throw new Error('无历史数据表，请安装 analytics 插件')
@@ -269,7 +304,12 @@ export const io = {
     return `导入成功（${result.imported}/${totalAttempted}条）`
   },
 
-  // 解析JSON数据
+  /**
+   * 解析JSON格式的统计数据
+   * @param {string} content JSON格式的字符串内容
+   * @returns {{validRecords: Array<StatRecord>, totalRecords: number, invalidRecords: number}} 解析结果，包括有效记录、总记录数和无效记录数
+   * @throws {Error} 解析失败时抛出错误
+   */
   parseJSON(content: string) {
     try {
       const data = JSON.parse(content)
@@ -303,11 +343,22 @@ export const io = {
     }
   },
 
-  // 导入记录到数据库
+  /**
+   * 将统计记录导入到数据库
+   * @param {Context} ctx Koishi 上下文
+   * @param {Array<StatRecord>} records 要导入的统计记录数组
+   * @returns {Promise<{imported: number, errors: number}>} 导入结果，包括成功导入数和错误数
+   */
   async importRecords(ctx: Context, records: StatRecord[]) {
     let imported = 0, errors = 0
     const batchSize = 100
 
+    /**
+     * 处理名称，去除无效内容
+     * @param {string} name 原始名称
+     * @param {string} id 相关ID
+     * @returns {string} 处理后的名称
+     */
     const processName = (name: string, id: string): string => {
       if (!name) return '';
       const cleanName = utils.sanitizeString(name);

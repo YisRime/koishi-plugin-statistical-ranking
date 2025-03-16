@@ -358,5 +358,30 @@ export const utils = {
       : `全局${typeMap[type]}统计 ——`
 
     return { records, title }
+  },
+
+  /**
+   * 格式化并返回指定类型的列表
+   * @param {StatRecord[]} records - 统计记录数组
+   * @param {keyof StatRecord} key - 要获取的键名
+   * @param {string} title - 列表标题
+   * @returns {string|null} 格式化后的列表字符串，无内容则返回null
+   */
+  formatList: (records: StatRecord[], key: keyof StatRecord, title: string): string | null => {
+    const uniqueKeys = utils.getUniqueKeys(records, key)
+
+    if (key === 'command') {
+      const commands = uniqueKeys.filter(cmd => cmd !== '_message')
+      return commands.length ? `${title} ——\n${commands.join(', ')}` : null
+    } else if (key === 'userId' || key === 'guildId') {
+      const items = uniqueKeys.map(id => {
+        const record = records.find(r => r[key] === id)
+        const name = key === 'userId' ? record?.userName : record?.guildName
+        return name ? `${name} (${id})` : id
+      })
+      return items.length ? `${title} ——\n${items.join(', ')}` : null
+    }
+
+    return uniqueKeys.length ? `${title} ——\n${uniqueKeys.join(', ')}` : null
   }
 }
