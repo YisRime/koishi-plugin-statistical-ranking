@@ -2,7 +2,6 @@ import { Context, Schema } from 'koishi'
 import { database } from './database'
 import { io } from './io'
 import { utils } from './utils'
-import { Renderer, RendererConfig } from './render'
 
 /**
  * @packageDocumentation
@@ -22,8 +21,6 @@ export const inject = {
  * @property {boolean} [enableDisplayFilter] - 是否启用显示过滤功能
  * @property {string[]} [displayBlacklist] - 显示过滤黑名单
  * @property {string[]} [displayWhitelist] - 显示过滤白名单
- * @property {boolean} [enableImageRender] - 是否启用图片渲染
- * @property {RendererConfig} [renderer] - 图像渲染器配置
  */
 export interface Config {
   enableDataTransfer?: boolean
@@ -31,8 +28,6 @@ export interface Config {
   enableDisplayFilter?: boolean
   displayBlacklist?: string[]
   displayWhitelist?: string[]
-  enableImageRender?: boolean
-  renderer?: RendererConfig
 }
 
 /**
@@ -42,20 +37,8 @@ export const Config = Schema.intersect([
   Schema.object({
     enableClear: Schema.boolean().default(true).description('启用统计数据清除'),
     enableDataTransfer: Schema.boolean().default(true).description('启用统计数据导入导出'),
-    enableImageRender: Schema.boolean().default(false).description('启用图片渲染'),
     enableDisplayFilter: Schema.boolean().default(false).description('启用显示过滤'),
   }).description('基础配置'),
-  Schema.union([
-    Schema.object({
-      enableImageRender: Schema.const(true).required(),
-      renderer: Schema.object({
-        theme: Schema.union(['light', 'dark']).default('light').description('渲染主题'),
-        showAvatar: Schema.boolean().default(true).description('显示用户头像'),
-        width: Schema.number().default(800).description('图像宽度（像素）'),
-        timeout: Schema.number().default(10).description('渲染超时（秒）')
-      }).description('图片渲染配置')
-    }),
-  ]),
   Schema.union([
     Schema.object({
       enableDisplayFilter: Schema.const(true).required(),
@@ -150,7 +133,6 @@ interface BindingRecord {
  * - 设置数据库结构
  * - 注册事件监听器
  * - 注册指令
- * - 初始化渲染器
  *
  * @param ctx - Koishi应用上下文
  * @param config - 插件配置对象
@@ -160,25 +142,11 @@ export async function apply(ctx: Context, config: Config = {}) {
   config = {
     enableClear: true,
     enableDataTransfer: true,
-    enableImageRender: false,
     enableDisplayFilter: false,
     ...config
   }
 
-  // 确保渲染器配置存在
-  if (config.enableImageRender && !config.renderer) {
-    config.renderer = {}
-  }
-
   database.initialize(ctx)
-  const rendererConfig = {
-    enabled: config.enableImageRender,
-    ...(config.enableImageRender && config.renderer ? config.renderer : {})
-  }
-  // 创建渲染器实例
-  const renderer = Renderer.create(ctx, rendererConfig)
-  // 插件卸载时释放资源
-  ctx.on('dispose', () => renderer.dispose?.())
 
   /**
    * 处理消息和命令记录
@@ -198,22 +166,11 @@ export async function apply(ctx: Context, config: Config = {}) {
   ctx.on('message', (session) => handleRecord(session, null))
 
   /**
-   * 根据配置和选项确定是否使用文本模式
-   * @param options 命令选项
-   * @returns 是否使用文本模式
-   */
-  const OutputMode = (options: any) => {
-    if (options.negate) return config.enableImageRender
-    return !config.enableImageRender
-  }
-
-  /**
    * 主统计命令
    * 用于查看用户的个人统计信息
    */
   const stat = ctx.command('stat [arg:string]', '查看个人统计信息')
-    .option('negate', '-n 切换输出模式（图片/文本）')
-    .action(async ({ session, args, options }) => {
+    .action(async ({ session, args }) => {
       // 获取用户信息和解析参数
       const userInfo = await utils.getSessionInfo(session)
       const arg = args[0]?.toLowerCase()
@@ -273,16 +230,8 @@ export async function apply(ctx: Context, config: Config = {}) {
       const title = `${userName}的统计（共${totalMessages}条）${pageInfo} ——`;
       // 获取渲染内容
       const items = pagedItems.map(item => item.content);
-      // 根据选项和配置决定输出方式
-      if (OutputMode(options)) {
-        return title + '\n' + items.join('\n');
-      } else {
-        return await renderer.renderResult(title, items, {
-          userName,
-          session,
-          fallbackToText: true
-        });
-      }
+
+      return title + '\n' + items.join('\n');
     })
 
   /**
@@ -293,7 +242,6 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .option('negate', '-n 切换输出模式（图片/文本）')
     .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
@@ -317,15 +265,8 @@ export async function apply(ctx: Context, config: Config = {}) {
         title: result.title,
         skipPaging: showAll
       })
-      // 根据选项和配置决定输出方式
-      if (OutputMode(options)) {
-        return processed.title + '\n' + processed.items.join('\n');
-      } else {
-        return await renderer.renderResult(processed.title, processed.items, {
-          session,
-          fallbackToText: true
-        });
-      }
+
+      return processed.title + '\n' + processed.items.join('\n');
     })
 
   /**
@@ -335,7 +276,6 @@ export async function apply(ctx: Context, config: Config = {}) {
   stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .option('negate', '-n 切换输出模式（图片/文本）')
     .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
@@ -359,15 +299,8 @@ export async function apply(ctx: Context, config: Config = {}) {
         title: result.title,
         skipPaging: showAll
       })
-      // 根据选项和配置决定输出方式
-      if (OutputMode(options)) {
-        return processed.title + '\n' + processed.items.join('\n');
-      } else {
-        return await renderer.renderResult(processed.title, processed.items, {
-          session,
-          fallbackToText: true
-        });
-      }
+
+      return processed.title + '\n' + processed.items.join('\n');
     })
 
   /**
@@ -378,7 +311,6 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
-    .option('negate', '-n 切换输出模式（图片/文本）')
     .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
@@ -402,15 +334,8 @@ export async function apply(ctx: Context, config: Config = {}) {
         title: result.title,
         skipPaging: showAll
       })
-      // 根据选项和配置决定输出方式
-      if (OutputMode(options)) {
-        return processed.title + '\n' + processed.items.join('\n');
-      } else {
-        return await renderer.renderResult(processed.title, processed.items, {
-          session,
-          fallbackToText: true
-        });
-      }
+
+      return processed.title + '\n' + processed.items.join('\n');
     })
 
   /**
