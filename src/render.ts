@@ -16,21 +16,32 @@ export class Renderer {
 
   static create(ctx: Context, config: RendererConfig = {}): Renderer {
     const renderer = new Renderer(ctx, config)
-    renderer.init().catch(e => ctx.logger.error('初始化渲染器失败:', e))
+    renderer.init().catch(e => {
+      ctx.logger.error('初始化渲染器失败:', e)
+      renderer.ready = false
+    })
     return renderer
   }
 
   private constructor(private ctx: Context, private config: RendererConfig = {}) {
-    this.config.width = config.width || 800
-    this.config.timeout = config.timeout || 10
-    this.config.enabled = config.enabled !== false
+    this.config = {
+      width: 800,
+      timeout: 10,
+      enabled: false,
+      theme: 'light',
+      showAvatar: true,
+      ...config
+    }
   }
 
   /**
    * 初始化渲染器
    */
   async init(): Promise<void> {
-    if (!this.config.enabled) return
+    if (!this.config.enabled) {
+      this.ctx.logger.debug('图像渲染未启用')
+      return
+    }
 
     try {
       if (!this.ctx.puppeteer) {
@@ -43,6 +54,7 @@ export class Renderer {
       this.ctx.logger.info('图像渲染器初始化完成')
     } catch (error) {
       this.ctx.logger.error('渲染器初始化失败:', error)
+      this.ready = false
     }
   }
 
@@ -212,7 +224,8 @@ export class Renderer {
     session?: any
     fallbackToText?: boolean
   } = {}): Promise<Element | string> {
-    if (!this.config.enabled || !this.ready) {
+    // 如果渲染器未就绪，直接返回文本
+    if (!this.config.enabled || !this.ready || !this.browser) {
       return options.fallbackToText !== false ? `${title}\n${items.join('\n')}` : ''
     }
 

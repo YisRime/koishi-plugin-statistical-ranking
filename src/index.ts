@@ -159,10 +159,13 @@ export async function apply(ctx: Context, config: Config) {
 
   database.initialize(ctx)
   const rendererConfig = {
-    ...config.renderer,
+    ...config.renderer || {},
     enabled: config.enableImageRender
   }
+  // 创建渲染器实例
   const renderer = Renderer.create(ctx, rendererConfig)
+  // 插件卸载时释放资源
+  ctx.on('dispose', () => renderer.dispose?.())
 
   /**
    * 处理消息和命令记录
