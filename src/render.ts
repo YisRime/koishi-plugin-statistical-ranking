@@ -15,6 +15,16 @@ export class Renderer {
   private ready = false
 
   static create(ctx: Context, config: RendererConfig = {}): Renderer {
+    // 确保配置对象有默认值
+    config = {
+      enabled: false,
+      theme: 'light',
+      width: 800,
+      showAvatar: true,
+      timeout: 10,
+      ...config
+    }
+
     const renderer = new Renderer(ctx, config)
 
     // 仅当启用渲染时才初始化浏览器
@@ -31,6 +41,7 @@ export class Renderer {
   }
 
   private constructor(private ctx: Context, private config: RendererConfig = {}) {
+    // 确保配置对象完整
     this.config = {
       width: 800,
       timeout: 10,

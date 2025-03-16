@@ -155,12 +155,25 @@ interface BindingRecord {
  * @param ctx - Koishi应用上下文
  * @param config - 插件配置对象
  */
-export async function apply(ctx: Context, config: Config) {
+export async function apply(ctx: Context, config: Config = {}) {
+  // 确保配置对象有默认值
+  config = {
+    enableClear: true,
+    enableDataTransfer: true,
+    enableImageRender: false,
+    enableDisplayFilter: false,
+    ...config
+  }
+
+  // 确保渲染器配置存在
+  if (config.enableImageRender && !config.renderer) {
+    config.renderer = {}
+  }
 
   database.initialize(ctx)
   const rendererConfig = {
     enabled: config.enableImageRender,
-    ...(config.enableImageRender ? config.renderer || {} : {})
+    ...(config.enableImageRender && config.renderer ? config.renderer : {})
   }
   // 创建渲染器实例
   const renderer = Renderer.create(ctx, rendererConfig)
