@@ -168,33 +168,33 @@ export async function apply(ctx: Context, config: Config) {
       const messageRecords = records.filter(r => r.command === '_message')
       const commandRecords = records.filter(r => r.command !== '_message')
       const totalMessages = messageRecords.reduce((sum, r) => sum + r.count, 0)
-      // 生成简洁报告
-      let result = `${userInfo.userName || userInfo.userId}的统计 —\n`
-      result += `总发言：${totalMessages}条\n`
-      // 处理命令统计
+      // 生成标题
+      const title = `${userInfo.userName || userInfo.userId}的统计（总计${totalMessages}条） —`
+      // 命令统计部分
       const commandResult = await utils.processStatRecords(commandRecords, 'command', {
         sortBy: 'count',
         disableCommandMerge: false,
-        skipPaging: true
+        skipPaging: showAll,
+        page: page,
+        pageSize: 8,
       })
-      if (commandResult.items.length > 0) {
-        commandResult.items.forEach(item => {
-          const [name, count] = item.trim().split(/\s+/).filter(Boolean)
-          result += `${name}: ${count}\n`
-        })
-      }
-      // 处理群组统计
+      // 群组统计部分
       const guildResult = await utils.processStatRecords(messageRecords, 'guildId', {
         sortBy: 'count',
         truncateId: true,
-        skipPaging: true
+        skipPaging: showAll,
+        page: page,
+        pageSize: 8,
       })
-      if (guildResult.items.length > 0) {
-        guildResult.items.forEach(item => {
-          const [name, count] = item.trim().split(/\s+/).filter(Boolean)
-          result += `${name}: ${count}\n`
-        })
+      // 格式化输出
+      let result = `${title}\n`
+      if (commandResult.items.length > 0) {
+        result += `\n${commandResult.title}\n${commandResult.items.join('\n')}\n`
       }
+      if (guildResult.items.length > 0) {
+        result += `\n${guildResult.title}\n${guildResult.items.join('\n')}`
+      }
+
       return result
     })
 
