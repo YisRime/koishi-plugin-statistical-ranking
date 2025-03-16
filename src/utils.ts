@@ -233,6 +233,8 @@ export const utils = {
       : title;
 
     const countWidth = 6, timeWidth = 10, nameWidth = 18;
+    // 使用Unicode中Braille空白符(U+2800)代替普通空格进行占位
+    const padChar = '\u2800';
 
     const items = pagedEntries.map(([key, {count, lastTime}]) => {
       const displayName = truncateId && nameMap.has(key)
@@ -243,9 +245,8 @@ export const utils = {
       const truncatedCount = this.truncateByDisplayWidth(countStr, countWidth);
       const timeAgo = this.formatTimeAgo(lastTime);
       const truncatedTime = this.truncateByDisplayWidth(timeAgo, timeWidth);
-
-      const namePadding = ' '.repeat(Math.max(0, nameWidth - this.getStringDisplayWidth(truncatedName)));
-      const countPadding = ' '.repeat(Math.max(0, countWidth - this.getStringDisplayWidth(truncatedCount)));
+      const namePadding = padChar.repeat(Math.max(0, nameWidth - this.getStringDisplayWidth(truncatedName)));
+      const countPadding = padChar.repeat(Math.max(0, countWidth - this.getStringDisplayWidth(truncatedCount)));
 
       return `${truncatedName}${namePadding} ${countPadding}${truncatedCount} ${truncatedTime}`;
     });
