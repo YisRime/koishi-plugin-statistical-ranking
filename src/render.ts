@@ -16,10 +16,17 @@ export class Renderer {
 
   static create(ctx: Context, config: RendererConfig = {}): Renderer {
     const renderer = new Renderer(ctx, config)
-    renderer.init().catch(e => {
-      ctx.logger.error('初始化渲染器失败:', e)
-      renderer.ready = false
-    })
+
+    // 仅当启用渲染时才初始化浏览器
+    if (config.enabled) {
+      renderer.init().catch(e => {
+        ctx.logger.error('初始化渲染器失败:', e)
+        renderer.ready = false
+      })
+    } else {
+      ctx.logger.debug('图像渲染未启用')
+    }
+
     return renderer
   }
 

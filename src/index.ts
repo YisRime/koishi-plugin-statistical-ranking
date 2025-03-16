@@ -159,8 +159,8 @@ export async function apply(ctx: Context, config: Config) {
 
   database.initialize(ctx)
   const rendererConfig = {
-    ...config.renderer || {},
-    enabled: config.enableImageRender
+    enabled: config.enableImageRender,
+    ...(config.enableImageRender ? config.renderer || {} : {})
   }
   // 创建渲染器实例
   const renderer = Renderer.create(ctx, rendererConfig)
