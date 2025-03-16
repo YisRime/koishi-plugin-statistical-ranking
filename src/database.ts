@@ -38,12 +38,7 @@ export const database = {
    * @description 更新或插入统计记录
    */
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
-    if (!data.platform || !data.guildId || !data.userId) {
-      ctx.logger.warn('Invalid record data:', data)
-      return
-    }
-
-    data.command ||= 'mess_age'
+    data.command ||= '_message'
 
     try {
       const query = {
