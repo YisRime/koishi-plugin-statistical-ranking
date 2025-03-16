@@ -127,23 +127,37 @@ export const utils = {
   formatTimeAgo(date: Date): string {
     if (!date?.getTime()) return '未知时间'
     const diff = Date.now() - date.getTime()
-    if (Math.abs(diff) < 10000) return (diff < 0 ? '一会后' : '一会前')
+    if (Math.abs(diff) < 3000) return (diff < 0 ? '一会后' : '一会前')
 
     const units: [number, string][] = [
       [31536000000, '年'],
       [2592000000, '月'],
       [86400000, '天'],
       [3600000, '时'],
-      [60000, '分']
+      [60000, '分'],
+      [1000, '秒']
     ]
 
     const absDiff = Math.abs(diff)
     const suffix = diff < 0 ? '后' : '前'
 
-    for (const [div, unit] of units) {
-      const val = Math.floor(absDiff / div)
-      if (val > 0) return `${val}${unit}${suffix}`
+    for (let i = 0; i < units.length; i++) {
+      const [primaryDiv, primaryUnit] = units[i]
+      if (absDiff < primaryDiv) continue
+      const primaryVal = Math.floor(absDiff / primaryDiv)
+      // 计算次要单位
+      if (i < units.length - 1) {
+        const [secondaryDiv, secondaryUnit] = units[i + 1]
+        const remainder = absDiff % primaryDiv
+        const secondaryVal = Math.floor(remainder / secondaryDiv)
+
+        if (secondaryVal > 0) {
+          return `${primaryVal}${primaryUnit}${secondaryVal}${secondaryUnit}${suffix}`
+        }
+      }
+      return `${primaryVal}${primaryUnit}${suffix}`
     }
+
     return `一会${suffix}`
   },
 
