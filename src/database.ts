@@ -102,10 +102,8 @@ export const database = {
     const query = Object.fromEntries(
       Object.entries(options).filter(([_, value]) => Boolean(value))
     )
-
-    ctx.logger.info(`正在删除统计记录...`)
     const result = await ctx.database.remove('analytics.stat', query)
-    ctx.logger.info(`已删除${result}条统计记录`)
+    ctx.logger.info(`已删除所选统计记录`)
 
     return Number(result ?? 0)
   }

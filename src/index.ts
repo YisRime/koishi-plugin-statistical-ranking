@@ -148,71 +148,54 @@ export async function apply(ctx: Context, config: Config) {
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
   ctx.on('message', (session) => handleRecord(session, null))
 
-  const stat = ctx.command('stat', '查看个人统计信息')
-    .action(async ({ session }) => {
+  const stat = ctx.command('stat [arg:string]', '查看个人统计信息')
+    .action(async ({ session, args }) => {
       // 获取用户完整信息
       const userInfo = await utils.getSessionInfo(session)
       const options = { userId: userInfo.userId, platform: userInfo.platform }
       const records = await ctx.database.get('analytics.stat', options)
       if (!records?.length) return '未找到记录'
-      // 创建聚合统计Map
-      const statsMap = new Map()
-      // 处理所有记录
-      for (const record of records) {
-        const isMessage = record.command === '_message'
-        // 发言记录
-        if (isMessage) {
-          const key = `msg:${record.guildId}`
-          const displayName = record.guildName || record.guildId
-
-          if (!statsMap.has(key)) {
-            statsMap.set(key, {
-              name: displayName,
-              count: 0,
-              lastTime: new Date(0),
-              isMessage: true
-            })
-          }
-
-          const entry = statsMap.get(key)
-          entry.count += record.count
-          if (record.lastTime > entry.lastTime) {
-            entry.lastTime = record.lastTime
-          }
-        }
-        // 命令记录
-        else {
-          const commandName = record.command.split('.')[0]
-          const key = `cmd:${commandName}`
-
-          if (!statsMap.has(key)) {
-            statsMap.set(key, {
-              name: commandName,
-              count: 0,
-              lastTime: new Date(0),
-              isMessage: false
-            })
-          }
-
-          const entry = statsMap.get(key)
-          entry.count += record.count
-          if (record.lastTime > entry.lastTime) {
-            entry.lastTime = record.lastTime
-          }
-        }
+      // 解析参数
+      const arg = args[0]?.toLowerCase()
+      let page = 1
+      let showAll = false
+      if (arg === 'all') {
+        showAll = true
+      } else if (arg && /^\d+$/.test(arg)) {
+        page = parseInt(arg)
       }
-      // 转换为数组并排序（按使用次数）
-      let statEntries = Array.from(statsMap.values())
-        .sort((a, b) => b.count - a.count)
-
-      // 生成统计文本
-      const title = `${userInfo.userName || userInfo.userId}的统计信息 ——`
-      const items = statEntries.map(entry => {
-        const countSuffix = entry.isMessage ? '条' : '次'
-        return `${entry.name.padEnd(12)} ${entry.count.toString().padStart(6)}${countSuffix} ${utils.formatTimeAgo(entry.lastTime)}`
+      // 分类记录
+      const messageRecords = records.filter(r => r.command === '_message')
+      const commandRecords = records.filter(r => r.command !== '_message')
+      const totalMessages = messageRecords.reduce((sum, r) => sum + r.count, 0)
+      // 生成简洁报告
+      let result = `${userInfo.userName || userInfo.userId}的统计 —\n`
+      result += `总发言：${totalMessages}条\n`
+      // 处理命令统计
+      const commandResult = await utils.processStatRecords(commandRecords, 'command', {
+        sortBy: 'count',
+        disableCommandMerge: false,
+        skipPaging: true
       })
-
-      return title + '\n' + items.join('\n')
+      if (commandResult.items.length > 0) {
+        commandResult.items.forEach(item => {
+          const [name, count] = item.trim().split(/\s+/).filter(Boolean)
+          result += `${name}: ${count}\n`
+        })
+      }
+      // 处理群组统计
+      const guildResult = await utils.processStatRecords(messageRecords, 'guildId', {
+        sortBy: 'count',
+        truncateId: true,
+        skipPaging: true
+      })
+      if (guildResult.items.length > 0) {
+        guildResult.items.forEach(item => {
+          const [name, count] = item.trim().split(/\s+/).filter(Boolean)
+          result += `${name}: ${count}\n`
+        })
+      }
+      return result
     })
 
   stat.subcommand('.command [arg:string]', '查看命令统计')
@@ -231,14 +214,13 @@ export async function apply(ctx: Context, config: Config) {
 
       const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
-      const pageSize = 15
       const processed = await utils.processStatRecords(result.records, 'command', {
         sortBy: 'count',
         disableCommandMerge: showAll,
         displayBlacklist: showAll ? [] : (config.enableDisplayFilter ? config.displayBlacklist : []),
         displayWhitelist: showAll ? [] : (config.enableDisplayFilter ? config.displayWhitelist : []),
         page: page,
-        pageSize,
+        pageSize: 15,
         title: result.title,
         skipPaging: showAll
       })
@@ -261,13 +243,13 @@ export async function apply(ctx: Context, config: Config) {
 
       const result = await utils.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
-      const pageSize = 15
       const processed = await utils.processStatRecords(result.records, 'userId', {
+        sortBy: 'count',
         truncateId: true,
         displayBlacklist: showAll ? [] : (config.enableDisplayFilter ? config.displayBlacklist : []),
         displayWhitelist: showAll ? [] : (config.enableDisplayFilter ? config.displayWhitelist : []),
         page: page,
-        pageSize,
+        pageSize: 15,
         title: result.title,
         skipPaging: showAll
       })
@@ -291,13 +273,13 @@ export async function apply(ctx: Context, config: Config) {
 
       const result = await utils.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
-      const pageSize = 15
       const processed = await utils.processStatRecords(result.records, 'guildId', {
+        sortBy: 'count',
         truncateId: true,
         displayBlacklist: showAll ? [] : (config.enableDisplayFilter ? config.displayBlacklist : []),
         displayWhitelist: showAll ? [] : (config.enableDisplayFilter ? config.displayWhitelist : []),
         page: page,
-        pageSize,
+        pageSize: 15,
         title: result.title,
         skipPaging: showAll
       })
@@ -311,30 +293,35 @@ export async function apply(ctx: Context, config: Config) {
     .action(async ({ options }) => {
       const records = await ctx.database.get('analytics.stat', {})
       if (!records?.length) return '未找到记录'
+
       const formatList = (key: keyof StatRecord, title: string) => {
-        const itemMap = new Map<string, string>()
-        records.forEach(record => {
-          const id = record[key] as string
-          if (!id) return
-          if (key === 'userId' && record.userName) {
-            itemMap.set(id, `${record.userName} (${id})`)
-          } else if (key === 'guildId' && record.guildName) {
-            itemMap.set(id, `${record.guildName} (${id})`)
-          } else {
-            itemMap.set(id, id)
-          }
-        })
-        const items = Array.from(itemMap.values())
-        return items.length ? `${title} ——\n${items.join(',')}` : null
+        const uniqueKeys = utils.getUniqueKeys(records, key)
+
+        if (key === 'command') {
+          const commands = uniqueKeys.filter(cmd => cmd !== '_message')
+          return commands.length ? `${title} ——\n${commands.join(', ')}` : null
+        } else if (key === 'userId' || key === 'guildId') {
+          const items = uniqueKeys.map(id => {
+            const record = records.find(r => r[key] === id)
+            const name = key === 'userId' ? record?.userName : record?.guildName
+            return name ? `${name} (${id})` : id
+          })
+          return items.length ? `${title} ——\n${items.join(', ')}` : null
+        }
+
+        return uniqueKeys.length ? `${title} ——\n${uniqueKeys.join(', ')}` : null
       }
+
       const hasParams = options.user || options.guild
       const parts: (string | null)[] = []
+
       if (!hasParams) {
         parts.push(formatList('platform', '平台列表'))
         parts.push(formatList('command', '命令列表'))
       }
       if (options.user) parts.push(formatList('userId', '用户列表'))
       if (options.guild) parts.push(formatList('guildId', '群组列表'))
+
       return parts.filter(Boolean).join('\n')
     })
 
@@ -363,7 +350,7 @@ export async function apply(ctx: Context, config: Config) {
           .map(([_, [label, value]]) => `${label}${value}`)
 
         return conditions.length
-          ? `已删除${conditions.join('、')}的${result}条统计记录`
+          ? `已删除${conditions.join('、')}的统计记录`
           : `已删除所有统计记录`
       })
   }
@@ -441,7 +428,7 @@ export async function apply(ctx: Context, config: Config) {
             return `${index + 1}.${prefix}${file}`
           }).join('\n')
 
-          return `使用 import [序号] 导入对应文件：\n${fileList}`
+          return `使用 import [序号]导入对应文件：\n${fileList}`
         } catch (e) {
           return `导入失败：${e.message}`
         }
