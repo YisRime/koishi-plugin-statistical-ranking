@@ -189,10 +189,10 @@ export async function apply(ctx: Context, config: Config) {
       // 格式化输出
       let result = `${title}\n`
       if (commandResult.items.length > 0) {
-        result += `\n${commandResult.title}\n${commandResult.items.join('\n')}\n`
+        result += `${commandResult.title}\n${commandResult.items.join('\n')}`
       }
       if (guildResult.items.length > 0) {
-        result += `\n${guildResult.title}\n${guildResult.items.join('\n')}`
+        result += `${guildResult.title}\n${guildResult.items.join('\n')}`
       }
 
       return result
