@@ -13,6 +13,7 @@
 - 支持从历史数据库导入
 - 支持清除统计数据（需要管理员权限）
 - 支持查看统计对象列表
+- 支持图像渲染输出（需安装puppeteer）
 
 ## 配置项
 
@@ -20,9 +21,15 @@
 - `enableClear`: 是否启用数据清除功能（默认开启）
 - `enableDisplayFilter`: 是否启用显示过滤功能（默认关闭）
   - 当启用时，可以配置 `displayBlacklist` 和 `displayWhitelist`
-- `displayBlacklist`: 显示过滤黑名单（格式：platform:group:user 或命令名）
-  - 例如: ['onebot:12345:67890', 'qq::12345', 'sandbox::', '.help']
-- `displayWhitelist`: 显示过滤白名单（格式同上，优先于黑名单生效）
+  - `displayBlacklist`: 显示过滤黑名单（格式：platform:group:user 或命令名）
+    - 例如: ['onebot:12345:67890', 'qq::12345', 'sandbox::', '.help']
+  - `displayWhitelist`: 显示过滤白名单（格式同上，优先于黑名单生效）
+- `enableImageRender`: 是否启用图片渲染（默认关闭，需安装puppeteer）
+  - `renderer`: 图像渲染配置
+    - `theme`: 主题，支持 'light' 或 'dark'（默认 'light'）
+    - `showAvatar`: 是否显示用户头像（默认开启）
+    - `width`: 图像宽度，单位像素（默认 800）
+    - `timeout`: 渲染超时时间，单位毫秒（默认 10000）
 
 ## 命令
 
@@ -39,6 +46,7 @@
 - `-u, --user [用户]` 指定用户统计
 - `-g, --guild [群组]` 指定群组统计
 - `-p, --platform [平台]` 指定平台统计
+- `-n, --negate` 切换输出模式（文本/图片）
 
 ### stat.user [页码|all]
 
@@ -46,6 +54,7 @@
 
 - `-g, --guild [群组]` 指定群组统计
 - `-p, --platform [平台]` 指定平台统计
+- `-n, --negate` 切换输出模式（文本/图片）
 
 ### stat.guild [页码|all]
 
@@ -54,6 +63,7 @@
 - `-u, --user [用户]` 指定用户统计
 - `-p, --platform [平台]` 指定平台统计
 - `-c, --command [命令]` 指定命令统计
+- `-n, --negate` 切换输出模式（文本/图片）
 
 ### stat.list
 

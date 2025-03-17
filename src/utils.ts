@@ -125,7 +125,7 @@ export const utils = {
    * @returns {string} 格式化后的时间字符串
    */
   formatTimeAgo(date: Date): string {
-    if (!date?.getTime()) return '未知时间'
+    if (!date?.getTime?.()) return '未知时间'
     const diff = Date.now() - date.getTime()
     if (Math.abs(diff) < 3000) return (diff < 0 ? '一会后' : '一会前')
 
@@ -145,7 +145,7 @@ export const utils = {
       const [primaryDiv, primaryUnit] = units[i]
       if (absDiff < primaryDiv) continue
       const primaryVal = Math.floor(absDiff / primaryDiv)
-      // 计算次要单位
+
       if (i < units.length - 1) {
         const [secondaryDiv, secondaryUnit] = units[i + 1]
         const remainder = absDiff % primaryDiv
@@ -309,7 +309,7 @@ export const utils = {
     if (!session) return null
 
     const platform = session.platform
-    const guildId = session.guildId || session.groupId || session.channelId
+    const guildId = session.guildId || session.groupId || session.channelId || 'private'
     const userId = await this.getPlatformId(session)
     const bot = session.bot
 

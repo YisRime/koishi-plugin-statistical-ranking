@@ -8,7 +8,10 @@ import { utils } from './utils'
  * 统计与排名插件 - 用于统计和分析用户命令使用情况与活跃度
  */
 export const name = 'statistical-ranking'
-export const inject = ['database']
+export const inject = {
+  required: ['database'],
+  optional: ['puppeteer']
+}
 
 /**
  * 插件配置接口
@@ -40,18 +43,17 @@ export const Config = Schema.intersect([
     Schema.object({
       enableDisplayFilter: Schema.const(true).required(),
       displayWhitelist: Schema.array(Schema.string())
-        .description('显示白名单，仅展示这些统计记录（先于黑名单生效）')
+        .description('白名单，仅展示这些统计记录（先于黑名单生效）')
         .default([]),
       displayBlacklist: Schema.array(Schema.string())
-        .description('显示黑名单，将不会默认展示以下命令/用户/群组/平台')
+        .description('黑名单，将不会默认展示以下命令/用户/群组/平台')
         .default([
           'onebot:12345:67890',
           'qq::12345',
           'sandbox::',
           '.help',
         ]),
-    }),
-    Schema.object({}),
+    }).description('显示过滤配置'),
   ]),
 ])
 
@@ -135,7 +137,15 @@ interface BindingRecord {
  * @param ctx - Koishi应用上下文
  * @param config - 插件配置对象
  */
-export async function apply(ctx: Context, config: Config) {
+export async function apply(ctx: Context, config: Config = {}) {
+  // 确保配置对象有默认值
+  config = {
+    enableClear: true,
+    enableDataTransfer: true,
+    enableDisplayFilter: false,
+    ...config
+  }
+
   database.initialize(ctx)
 
   /**
@@ -218,8 +228,10 @@ export async function apply(ctx: Context, config: Config) {
       const pageInfo = (showAll || totalPages <= 1) ? '' : `（第${validPage}/${totalPages}页）`;
       const userName = userInfo.userName || userInfo.userId;
       const title = `${userName}的统计（共${totalMessages}条）${pageInfo} ——`;
-      // 格式化输出
-      return title + '\n' + pagedItems.map(item => item.content).join('\n');
+      // 获取渲染内容
+      const items = pagedItems.map(item => item.content);
+
+      return title + '\n' + items.join('\n');
     })
 
   /**
@@ -230,7 +242,7 @@ export async function apply(ctx: Context, config: Config) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({options, args}) => {
+    .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -242,6 +254,7 @@ export async function apply(ctx: Context, config: Config) {
 
       const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
+
       const processed = await utils.processStatRecords(result.records, 'command', {
         sortBy: 'count',
         disableCommandMerge: showAll,
@@ -253,7 +266,7 @@ export async function apply(ctx: Context, config: Config) {
         skipPaging: showAll
       })
 
-      return processed.title + '\n' + processed.items.join('\n')
+      return processed.title + '\n' + processed.items.join('\n');
     })
 
   /**
@@ -263,7 +276,7 @@ export async function apply(ctx: Context, config: Config) {
   stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({options, args}) => {
+    .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -275,6 +288,7 @@ export async function apply(ctx: Context, config: Config) {
 
       const result = await utils.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
+
       const processed = await utils.processStatRecords(result.records, 'userId', {
         sortBy: 'count',
         truncateId: true,
@@ -286,7 +300,7 @@ export async function apply(ctx: Context, config: Config) {
         skipPaging: showAll
       })
 
-      return processed.title + '\n' + processed.items.join('\n')
+      return processed.title + '\n' + processed.items.join('\n');
     })
 
   /**
@@ -297,7 +311,7 @@ export async function apply(ctx: Context, config: Config) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
-    .action(async ({options, args}) => {
+    .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -309,6 +323,7 @@ export async function apply(ctx: Context, config: Config) {
 
       const result = await utils.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
+
       const processed = await utils.processStatRecords(result.records, 'guildId', {
         sortBy: 'count',
         truncateId: true,
@@ -320,7 +335,7 @@ export async function apply(ctx: Context, config: Config) {
         skipPaging: showAll
       })
 
-      return processed.title + '\n' + processed.items.join('\n')
+      return processed.title + '\n' + processed.items.join('\n');
     })
 
   /**
