@@ -232,9 +232,9 @@ export const utils = {
       ? `${title.endsWith(' ——') ? title.slice(0, -3) : title}（第${currentPage}/${totalPages}页）——`
       : title;
 
-    const countWidth = 5, timeWidth = 10, nameWidth = 15;
-    // 使用Unicode中Braille空白符(U+2800)代替普通空格进行占位
-    const padChar = '\u2800';
+    const countWidth = 6, timeWidth = 10, nameWidth = 18;
+    // 使用细空格(U+200A)代替空格，统一显示空间
+    const padChar = '\u200A';
 
     const items = pagedEntries.map(([key, {count, lastTime}]) => {
       const displayName = truncateId && nameMap.has(key)
