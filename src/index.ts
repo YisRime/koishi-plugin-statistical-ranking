@@ -1,7 +1,8 @@
-import { Context, Schema } from 'koishi'
+import { Context, Schema, h } from 'koishi'
 import { database } from './database'
 import { io } from './io'
 import { utils } from './utils'
+import * as render from './render'
 
 /**
  * @packageDocumentation
@@ -21,6 +22,7 @@ export const inject = {
  * @property {boolean} [enableDisplayFilter] - 是否启用显示过滤功能
  * @property {string[]} [displayBlacklist] - 显示过滤黑名单
  * @property {string[]} [displayWhitelist] - 显示过滤白名单
+ * @property {boolean} [defaultImageMode] - 是否默认使用图片模式展示
  */
 export interface Config {
   enableDataTransfer?: boolean
@@ -28,6 +30,7 @@ export interface Config {
   enableDisplayFilter?: boolean
   displayBlacklist?: string[]
   displayWhitelist?: string[]
+  defaultImageMode?: boolean
 }
 
 /**
@@ -38,6 +41,7 @@ export const Config = Schema.intersect([
     enableClear: Schema.boolean().default(true).description('启用统计数据清除'),
     enableDataTransfer: Schema.boolean().default(true).description('启用统计数据导入导出'),
     enableDisplayFilter: Schema.boolean().default(false).description('启用显示过滤'),
+    defaultImageMode: Schema.boolean().default(false).description('默认使用图片模式展示'),
   }).description('基础配置'),
   Schema.union([
     Schema.object({
@@ -143,8 +147,13 @@ export async function apply(ctx: Context, config: Config = {}) {
     enableClear: true,
     enableDataTransfer: true,
     enableDisplayFilter: false,
+    defaultImageMode: false,
     ...config
   }
+
+  // 确保只有在启用过滤时才使用过滤列表
+  const displayWhitelist = config.enableDisplayFilter ? (config.displayWhitelist || []) : []
+  const displayBlacklist = config.enableDisplayFilter ? (config.displayBlacklist || []) : []
 
   database.initialize(ctx)
 
@@ -170,7 +179,8 @@ export async function apply(ctx: Context, config: Config = {}) {
    * 用于查看用户的个人统计信息
    */
   const stat = ctx.command('stat [arg:string]', '查看统计信息')
-    .action(async ({ session, args }) => {
+    .option('visual', '-v 切换可视化模式')
+    .action(async ({ session, args, options }) => {
       // 获取用户信息和解析参数
       const userInfo = await utils.getSessionInfo(session)
       const arg = args[0]?.toLowerCase()
@@ -231,6 +241,53 @@ export async function apply(ctx: Context, config: Config = {}) {
       // 获取渲染内容
       const items = pagedItems.map(item => item.content);
 
+      // 确定使用文本还是图片模式展示
+      const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
+
+      // 如果使用图片模式并且puppeteer可用
+      if (useImageMode && ctx.puppeteer) {
+        try {
+          // 处理命令统计图片
+          if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
+            const imageBuffer = await render.generateStatImage(
+              ctx,
+              commandResult.records,
+              'command',
+              `${userName}的命令统计`,
+              { limit: 15, truncateId: false }
+            )
+            await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+          }
+
+          // 处理群组统计图片
+          if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
+            const imageBuffer = await render.generateStatImage(
+              ctx,
+              messageResult.records,
+              'guildId',
+              `${userName}的群组活跃度`,
+              { limit: 15, truncateId: true }
+            )
+            await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+          }
+
+          // 生成总体统计卡片
+          const cardData = [
+            { label: '消息总数', value: totalMessages },
+            { label: '活跃群组', value: typeof messageResult !== 'string' ? messageResult.records.length : 0 },
+            { label: '使用命令', value: typeof commandResult !== 'string' ? commandResult.records.length : 0 },
+          ]
+
+          const cardHtml = render.generateStatCardHtml(`${userName}的统计数据`, cardData)
+          const cardBuffer = await render.htmlToImage(cardHtml, ctx, { width: 400, height: 250 })
+          await session.send(h.image('data:image/png;base64,' + cardBuffer.toString('base64')))
+
+          return
+        } catch (e) {
+          ctx.logger.error('生成统计图片失败:', e)
+        }
+      }
+
       return title + '\n' + items.join('\n');
     })
 
@@ -242,7 +299,8 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({options, args}) => {
+    .option('visual', '-v 切换可视化模式')
+    .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -255,11 +313,35 @@ export async function apply(ctx: Context, config: Config = {}) {
       const result = await utils.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
 
+      const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
+
+      // 图片渲染逻辑
+      if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
+        try {
+          const imageBuffer = await render.generateStatImage(
+            ctx,
+            result.records,
+            'command',
+            result.title.replace(' ——', ''),
+            {
+              sortBy: 'count',
+              disableCommandMerge: showAll,
+              displayBlacklist: showAll ? [] : displayBlacklist,
+              displayWhitelist: showAll ? [] : displayWhitelist,
+              limit: 15,
+            }
+          )
+          return session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+        } catch (e) {
+          ctx.logger.error('生成命令统计图片失败:', e)
+        }
+      }
+
       const processed = await utils.processStatRecords(result.records, 'command', {
         sortBy: 'count',
         disableCommandMerge: showAll,
-        displayBlacklist: showAll ? [] : (config.enableDisplayFilter ? config.displayBlacklist : []),
-        displayWhitelist: showAll ? [] : (config.enableDisplayFilter ? config.displayWhitelist : []),
+        displayBlacklist: showAll ? [] : displayBlacklist,
+        displayWhitelist: showAll ? [] : displayWhitelist,
         page: page,
         pageSize: 15,
         title: result.title,
@@ -276,7 +358,8 @@ export async function apply(ctx: Context, config: Config = {}) {
   stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({options, args}) => {
+    .option('visual', '-v 切换可视化模式')
+    .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -289,11 +372,35 @@ export async function apply(ctx: Context, config: Config = {}) {
       const result = await utils.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
 
+      const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
+
+      // 图片渲染逻辑
+      if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
+        try {
+          const imageBuffer = await render.generateStatImage(
+            ctx,
+            result.records,
+            'userId',
+            result.title.replace(' ——', ''),
+            {
+              sortBy: 'count',
+              truncateId: true,
+              displayBlacklist: showAll ? [] : displayBlacklist,
+              displayWhitelist: showAll ? [] : displayWhitelist,
+              limit: 15,
+            }
+          )
+          return session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+        } catch (e) {
+          ctx.logger.error('生成用户统计图片失败:', e)
+        }
+      }
+
       const processed = await utils.processStatRecords(result.records, 'userId', {
         sortBy: 'count',
         truncateId: true,
-        displayBlacklist: showAll ? [] : (config.enableDisplayFilter ? config.displayBlacklist : []),
-        displayWhitelist: showAll ? [] : (config.enableDisplayFilter ? config.displayWhitelist : []),
+        displayBlacklist: showAll ? [] : displayBlacklist,
+        displayWhitelist: showAll ? [] : displayWhitelist,
         page: page,
         pageSize: 15,
         title: result.title,
@@ -311,7 +418,8 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
-    .action(async ({options, args}) => {
+    .option('visual', '-v 切换可视化模式')
+    .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -324,11 +432,35 @@ export async function apply(ctx: Context, config: Config = {}) {
       const result = await utils.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
 
+      const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
+
+      // 图片渲染逻辑
+      if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
+        try {
+          const imageBuffer = await render.generateStatImage(
+            ctx,
+            result.records,
+            'guildId',
+            result.title.replace(' ——', ''),
+            {
+              sortBy: 'count',
+              truncateId: true,
+              displayBlacklist: showAll ? [] : displayBlacklist,
+              displayWhitelist: showAll ? [] : displayWhitelist,
+              limit: 15,
+            }
+          )
+          return session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+        } catch (e) {
+          ctx.logger.error('生成群组统计图片失败:', e)
+        }
+      }
+
       const processed = await utils.processStatRecords(result.records, 'guildId', {
         sortBy: 'count',
         truncateId: true,
-        displayBlacklist: showAll ? [] : (config.enableDisplayFilter ? config.displayBlacklist : []),
-        displayWhitelist: showAll ? [] : (config.enableDisplayFilter ? config.displayWhitelist : []),
+        displayBlacklist: showAll ? [] : displayBlacklist,
+        displayWhitelist: showAll ? [] : displayWhitelist,
         page: page,
         pageSize: 15,
         title: result.title,
@@ -346,20 +478,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('user', '-u 显示用户列表')
     .option('guild', '-g 显示群组列表')
     .action(async ({ options }) => {
-      const records = await ctx.database.get('analytics.stat', {})
-      if (!records?.length) return '未找到记录'
-
-      const hasParams = options.user || options.guild
-      const parts: (string | null)[] = []
-
-      if (!hasParams) {
-        parts.push(utils.formatList(records, 'platform', '平台列表'))
-        parts.push(utils.formatList(records, 'command', '命令列表'))
-      }
-      if (options.user) parts.push(utils.formatList(records, 'userId', '用户列表'))
-      if (options.guild) parts.push(utils.formatList(records, 'guildId', '群组列表'))
-
-      return parts.filter(Boolean).join('\n')
+      return utils.handleListCommand(ctx, options)
     })
 
   if (config.enableClear) {
@@ -373,26 +492,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       .option('guild', '-g [guild:string] 指定群组')
       .option('command', '-c [command:string] 指定命令')
       .action(async ({ options }) => {
-        const result = await database.clearStats(ctx, {
-          userId: options.user,
-          platform: options.platform,
-          guildId: options.guild,
-          command: options.command
-        })
-
-        if (result === -1) return '已删除所有统计记录'
-        const conditions = Object.entries({
-          user: ['用户', options.user],
-          guild: ['群组', options.guild],
-          platform: ['平台', options.platform],
-          command: ['命令', options.command]
-        })
-          .filter(([_, [__, value]]) => value)
-          .map(([_, [label, value]]) => `${label}${value}`)
-
-        return conditions.length
-          ? `已删除${conditions.join('、')}的统计记录`
-          : `已删除所有统计记录`
+        return utils.handleClearCommand(ctx, options)
       })
   }
 
@@ -407,27 +507,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       .option('guild', '-g [guild:string] 指定群组')
       .option('command', '-c [command:string] 指定命令')
       .action(async ({ options, session }) => {
-        try {
-          if (Object.values(options).some(Boolean)) {
-            await session.send('正在导出...')
-          }
-
-          const result = await io.exportToFile(ctx, 'stat', {
-            userId: options.user,
-            platform: options.platform,
-            guildId: options.guild,
-            command: options.command
-          })
-
-          if (result.batches === 1) {
-            return `导出成功（${result.count}条）：\n- ${result.files[0].filename}`
-          } else {
-            const fileList = result.files.map(f => `- ${f.filename}`).join('\n')
-            return `导出成功（${result.count}条）：\n${fileList}`
-          }
-        } catch (e) {
-          return `导出失败：${e.message}`
-        }
+        return io.handleExportCommand(ctx, session, options)
       })
 
     /**
@@ -438,49 +518,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       .option('force', '-f 覆盖现有数据')
       .option('database', '-d 从历史数据库导入')
       .action(async ({ session, options, args }) => {
-        try {
-          // 从历史数据库导入
-          if (options.database) {
-            session.send('正在导入历史记录...')
-            try {
-              const result = await io.importLegacyData(ctx, options.force)
-              return result
-            } catch (e) {
-              return e.message
-            }
-          }
-          // 获取可导入文件列表
-          const { files, fileInfo } = await io.listImportFiles(ctx)
-          if (!files.length) {
-            return '未找到历史记录文件'
-          }
-          // 使用序号选择文件导入
-          const selector = args[0]
-          if (selector) {
-            if (selector > 0 && selector <= files.length) {
-              const targetFile = files[selector - 1]
-              await session.send(`正在${options.force ? '覆盖' : ''}导入文件：\n- ${targetFile}`)
-              return await io.importFromFile(ctx, targetFile, options.force)
-            }
-            return '请输入正确的序号'
-          }
-
-          // 显示文件列表
-          const fileList = files.map((file, index) => {
-            const info = fileInfo[file] || {}
-            let prefix = '📄'
-            if (file.includes('(N=')) {
-              prefix = '📦'
-            } else if (info.isBatch) {
-              prefix = '📎'
-            }
-            return `${index + 1}.${prefix}${file}`
-          }).join('\n')
-
-          return `使用 import [序号]导入对应文件：\n${fileList}`
-        } catch (e) {
-          return `导入失败：${e.message}`
-        }
+        return io.handleImportCommand(ctx, session, options, args[0])
       })
   }
 }

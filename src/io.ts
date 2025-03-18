@@ -1,4 +1,4 @@
-import { Context } from 'koishi'
+import { Context, Session } from 'koishi'
 import { StatRecord } from './index'
 import { utils } from './utils'
 import * as fs from 'fs'
@@ -419,5 +419,99 @@ export const io = {
     }
 
     return { imported, errors }
+  },
+
+  /**
+   * 处理导出命令
+   * @param {Context} ctx Koishi 上下文
+   * @param {Session} session 会话对象
+   * @param {Object} options 导出选项
+   * @returns {Promise<string>} 导出结果消息
+   */
+  async handleExportCommand(ctx: Context, session: Session, options: {
+    user?: string, platform?: string, guild?: string, command?: string
+  }): Promise<string> {
+    try {
+      // 发送进度提示
+      if (Object.values(options).some(Boolean)) {
+        await session.send('正在导出...')
+      }
+
+      // 执行导出
+      const result = await this.exportToFile(ctx, 'stat', {
+        userId: options.user,
+        platform: options.platform,
+        guildId: options.guild,
+        command: options.command
+      })
+
+      // 返回导出结果消息
+      if (result.batches === 1) {
+        return `导出成功（${result.count}条）：\n- ${result.files[0].filename}`
+      } else {
+        const fileList = result.files.map(f => `- ${f.filename}`).join('\n')
+        return `导出成功（${result.count}条）：\n${fileList}`
+      }
+    } catch (e) {
+      return `导出失败：${e.message}`
+    }
+  },
+
+  /**
+   * 处理导入命令
+   * @param {Context} ctx Koishi 上下文
+   * @param {Session} session 会话对象
+   * @param {Object} options 导入选项
+   * @param {boolean} [options.force] 是否覆盖现有数据
+   * @param {boolean} [options.database] 是否从历史数据库导入
+   * @param {number} [selector] 文件选择器序号
+   * @returns {Promise<string>} 导入结果消息
+   */
+  async handleImportCommand(ctx: Context, session: Session, options: {
+    force?: boolean, database?: boolean
+  }, selector?: number): Promise<string> {
+    try {
+      // 从历史数据库导入
+      if (options.database) {
+        session.send('正在导入历史记录...')
+        try {
+          return await this.importLegacyData(ctx, options.force)
+        } catch (e) {
+          return e.message
+        }
+      }
+
+      // 获取可导入文件列表
+      const { files, fileInfo } = await this.listImportFiles(ctx)
+      if (!files.length) {
+        return '未找到历史记录文件'
+      }
+
+      // 使用序号选择文件导入
+      if (selector) {
+        if (selector > 0 && selector <= files.length) {
+          const targetFile = files[selector - 1]
+          await session.send(`正在${options.force ? '覆盖' : ''}导入文件：\n- ${targetFile}`)
+          return await this.importFromFile(ctx, targetFile, options.force)
+        }
+        return '请输入正确的序号'
+      }
+
+      // 显示文件列表
+      const fileList = files.map((file, index) => {
+        const info = fileInfo[file] || {}
+        let prefix = '📄'
+        if (file.includes('(N=')) {
+          prefix = '📦'
+        } else if (info.isBatch) {
+          prefix = '📎'
+        }
+        return `${index + 1}.${prefix}${file}`
+      }).join('\n')
+
+      return `使用 import [序号]导入对应文件：\n${fileList}`
+    } catch (e) {
+      return `导入失败：${e.message}`
+    }
   }
 }

@@ -396,5 +396,76 @@ export const utils = {
     }
 
     return uniqueKeys.length ? `${title} ——\n${uniqueKeys.join(', ')}` : null
+  },
+
+  /**
+   * 处理列表查看命令
+   * @param {Context} ctx - Koishi上下文
+   * @param {Object} options - 选项
+   * @param {boolean} [options.user] - 是否查看用户列表
+   * @param {boolean} [options.guild] - 是否查看群组列表
+   * @returns {Promise<string>} 格式化的列表内容
+   */
+  async handleListCommand(ctx: Context, options: {
+    user?: boolean, guild?: boolean
+  }): Promise<string> {
+    const records = await ctx.database.get('analytics.stat', {})
+    if (!records?.length) return '未找到记录'
+
+    const hasParams = options.user || options.guild
+    const parts: (string | null)[] = []
+
+    if (!hasParams) {
+      parts.push(this.formatList(records, 'platform', '平台列表'))
+      parts.push(this.formatList(records, 'command', '命令列表'))
+    }
+    if (options.user) parts.push(this.formatList(records, 'userId', '用户列表'))
+    if (options.guild) parts.push(this.formatList(records, 'guildId', '群组列表'))
+
+    return parts.filter(Boolean).join('\n')
+  },
+
+  /**
+   * 处理清除统计数据命令
+   * @param {Context} ctx - Koishi上下文
+   * @param {Object} options - 清除选项
+   * @param {string} [options.user] - 指定用户
+   * @param {string} [options.platform] - 指定平台
+   * @param {string} [options.guild] - 指定群组
+   * @param {string} [options.command] - 指定命令
+   * @returns {Promise<string>} 清除结果消息
+   */
+  async handleClearCommand(ctx: Context, options: {
+    user?: string, platform?: string, guild?: string, command?: string
+  }): Promise<string> {
+    // 转换选项键名以匹配数据库字段名
+    const cleanOptions = {
+      userId: options.user,
+      platform: options.platform,
+      guildId: options.guild,
+      command: options.command
+    }
+
+    // 获取数据库模块引用
+    const db = await import('./database')
+
+    // 执行清除操作
+    const result = await db.database.clearStats(ctx, cleanOptions)
+
+    if (result === -1) return '已删除所有统计记录'
+
+    // 构建条件描述
+    const conditions = Object.entries({
+      user: ['用户', options.user],
+      guild: ['群组', options.guild],
+      platform: ['平台', options.platform],
+      command: ['命令', options.command]
+    })
+      .filter(([_, [__, value]]) => value)
+      .map(([_, [label, value]]) => `${label}${value}`)
+
+    return conditions.length
+      ? `已删除${conditions.join('、')}的统计记录`
+      : `已删除所有统计记录`
   }
 }
