@@ -2,6 +2,7 @@ import { Context } from 'koishi'
 import {} from 'koishi-plugin-puppeteer'
 import { StatProcessOptions } from './utils'
 import { StatRecord } from './index'
+import { utils } from './utils'
 
 /**
  * 将HTML内容转换为图片
@@ -79,11 +80,11 @@ export async function htmlToImage(html: string, ctx: Context, options: { width?:
 /**
  * 生成统计图表的HTML
  * @param {string} title - 图表标题
- * @param {Array<{name: string, value: number, time?: string}>} data - 统计数据
+ * @param {Array<{name: string, value: number, time: string}>} data - 统计数据
  * @param {Object} options - 图表选项
  * @returns {string} 生成的HTML内容
  */
-export function generateStatChartHtml(title: string, data: Array<{name: string, value: number, time?: string}>, options: {
+export function generateStatChartHtml(title: string, data: Array<{name: string, value: number, time: string}>, key: string, options: {
   width?: number;
   height?: number;
   barColor?: string;
@@ -92,22 +93,22 @@ export function generateStatChartHtml(title: string, data: Array<{name: string, 
 } = {}): string {
   const {
     width = 800,
-    height = 600,
     barColor = '#4d7cfe',
-    titleColor = '#333333',
-    textColor = '#666666',
+    titleColor = '#333333'
   } = options;
 
   // 计算最大值以调整图表比例
-  const maxValue = Math.max(...data.map(item => item.value));
+  const maxValue = Math.max(...data.map(item => item.value), 1);
   const barItems = data.map((item, index) => {
-    const percentage = (item.value / maxValue) * 60; // 60%为最大宽度
+    const percentage = (item.value / maxValue) * 70; // 70%为最大宽度
+    const valueText = key === 'command' ? `${item.value}次` : `${item.value}条`;
+
     return `
       <div class="stat-item">
         <div class="item-info">
-          <div class="item-name">${item.name}</div>
-          <div class="item-value">${item.value}</div>
-          ${item.time ? `<div class="item-time">${item.time}</div>` : ''}
+          <div class="item-name" title="${item.name}">${item.name}</div>
+          <div class="item-value">${valueText}</div>
+          <div class="item-time">${item.time}</div>
         </div>
         <div class="bar-container">
           <div class="bar" style="width:${percentage}%"></div>
@@ -117,70 +118,83 @@ export function generateStatChartHtml(title: string, data: Array<{name: string, 
   }).join('');
 
   return `
-    <div class="stat-chart" style="width:${width}px; height:${height}px;">
+    <div class="stat-chart">
       <style>
         .stat-chart {
           font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
           background-color: white;
-          border-radius: 10px;
-          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-          padding: 20px;
+          border-radius: 12px;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+          padding: 24px;
           box-sizing: border-box;
+          width: ${width}px;
         }
         .chart-title {
-          font-size: 20px;
+          font-size: 22px;
           font-weight: bold;
           color: ${titleColor};
-          margin-bottom: 20px;
+          margin-bottom: 24px;
           text-align: center;
+          padding-bottom: 12px;
+          border-bottom: 1px solid #eaeaea;
         }
         .stat-items {
           display: flex;
           flex-direction: column;
-          gap: 10px;
+          gap: 12px;
         }
         .stat-item {
           display: flex;
           flex-direction: column;
-          padding: 8px;
-          border-radius: 6px;
-          background-color: #f8f9fa;
+          padding: 10px 14px;
+          border-radius: 8px;
+          background-color: #f8f9fc;
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .stat-item:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         }
         .item-info {
           display: flex;
           justify-content: space-between;
-          margin-bottom: 5px;
+          align-items: center;
+          margin-bottom: 8px;
         }
         .item-name {
-          font-size: 14px;
-          color: ${textColor};
+          font-size: 15px;
+          color: #333;
           flex: 1;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
         .item-value {
-          font-size: 14px;
+          font-size: 15px;
           font-weight: bold;
           color: #333;
-          margin: 0 10px;
+          margin: 0 12px;
+          min-width: 60px;
+          text-align: right;
         }
         .item-time {
-          font-size: 12px;
+          font-size: 13px;
           color: #999;
           margin-left: auto;
+          min-width: 80px;
+          text-align: right;
         }
         .bar-container {
           width: 100%;
-          height: 6px;
+          height: 8px;
           background-color: #e9ecef;
-          border-radius: 3px;
+          border-radius: 4px;
           overflow: hidden;
         }
         .bar {
           height: 100%;
           background-color: ${barColor};
-          border-radius: 3px;
+          border-radius: 4px;
           transition: width 0.5s ease;
         }
       </style>
@@ -197,20 +211,29 @@ export function generateStatChartHtml(title: string, data: Array<{name: string, 
  * @param {StatRecord[]} records - 统计记录数组
  * @param {keyof StatRecord} key - 统计键名
  * @param {StatProcessOptions} options - 处理选项
- * @returns {Array<{name: string, value: number, time?: string}>} 转换后的图表数据
+ * @returns {Array<{name: string, value: number, time: string}>} 转换后的图表数据
  */
-export function recordsToChartData(records: StatRecord[], key: keyof StatRecord, options: StatProcessOptions = {}): Array<{name: string, value: number, time?: string}> {
+export function recordsToChartData(records: StatRecord[], key: keyof StatRecord, options: StatProcessOptions = {}): Array<{name: string, value: number, time: string}> {
   const {
-    limit = 15,
     sortBy = 'count',
+    disableCommandMerge = false,
     truncateId = false,
     displayBlacklist = [],
     displayWhitelist = []
   } = options;
 
-  // 聚合数据
-  const dataMap = new Map<string, {value: number, time: Date, displayName?: string}>();
-  for (const record of records) {
+  // 使用相同的StatMap逻辑处理数据聚合
+  const keyFormatter = (key === 'command' && !disableCommandMerge)
+    ? (k: string) => k?.split('.')[0] || '' : undefined;
+
+  const dataMap = new Map<string, {count: number, lastTime: Date, displayName?: string}>();
+
+  // 过滤记录
+  const filteredRecords = (key === 'command' && !disableCommandMerge)
+    ? records.filter(r => r.command !== '_message') : records;
+
+  // 聚合记录
+  for (const record of filteredRecords) {
     const recordKey = record[key] as string;
 
     // 过滤黑名单/白名单
@@ -221,31 +244,34 @@ export function recordsToChartData(records: StatRecord[], key: keyof StatRecord,
       continue;
     }
 
-    let displayName = recordKey;
+    const formattedKey = keyFormatter ? keyFormatter(recordKey) : recordKey;
+    let displayName = formattedKey;
+
     if (key === 'userId' && record.userName) {
       displayName = truncateId ? record.userName : `${record.userName} (${recordKey})`;
     } else if (key === 'guildId' && record.guildName) {
       displayName = truncateId ? record.guildName : `${record.guildName} (${recordKey})`;
     }
 
-    const current = dataMap.get(recordKey) || { value: 0, time: record.lastTime, displayName };
-    current.value += record.count;
-    if (record.lastTime > current.time) {
-      current.time = record.lastTime;
+    const current = dataMap.get(formattedKey) || { count: 0, lastTime: record.lastTime, displayName };
+    current.count += record.count;
+    if (record.lastTime > current.lastTime) {
+      current.lastTime = record.lastTime;
     }
-    dataMap.set(recordKey, current);
+    dataMap.set(formattedKey, current);
   }
 
   // 转换为数组并排序
   let chartData = Array.from(dataMap.entries()).map(([key, data]) => ({
     name: data.displayName || key,
-    value: data.value,
-    time: new Date(data.time).toISOString().substring(0, 10)
+    value: data.count,
+    time: utils.formatTimeAgo(data.lastTime)
   }));
 
-  // 排序并限制数量
+  // 排序
   chartData.sort((a, b) => sortBy === 'count' ? b.value - a.value : a.name.localeCompare(b.name));
-  return chartData.slice(0, limit);
+
+  return chartData;
 }
 
 /**
@@ -423,19 +449,33 @@ export async function generateStatImage(
   title: string,
   options: StatProcessOptions = {}
 ): Promise<Buffer> {
-  // 转换记录为图表数据
+  // 转换记录为图表数据，不限制数量以显示全部数据
   const chartData = recordsToChartData(records, key, options);
 
-  // 根据数据量调整高度
-  const height = Math.max(400, 180 + chartData.length * 40);
+  // 根据数据量动态调整高度
+  // 基础高度 + 每个数据项高度 + 边距
+  const baseHeight = 200;  // 标题和边距的基础高度
+  const itemHeight = 60;   // 每个数据项的高度
+  const height = baseHeight + chartData.length * itemHeight;
+
+  // 调整宽度以适应内容
+  const width = 800;
+
+  // 图表颜色根据数据类型设置
+  let barColor = '#4d7cfe';  // 默认蓝色
+  if (key === 'userId') {
+    barColor = '#ff6b81';    // 用户统计粉色
+  } else if (key === 'guildId') {
+    barColor = '#5dd5a8';    // 群组统计绿色
+  }
 
   // 生成HTML图表
-  const html = generateStatChartHtml(title, chartData, {
-    width: 600,
-    height: height,
-    barColor: key === 'userId' ? '#ff6b81' : (key === 'command' ? '#4d7cfe' : '#5dd5a8')
+  const html = generateStatChartHtml(title, chartData, key, {
+    width,
+    height,
+    barColor
   });
 
   // 渲染为图片
-  return await htmlToImage(html, ctx, { width: 600, height: height });
+  return await htmlToImage(html, ctx, { width, height });
 }

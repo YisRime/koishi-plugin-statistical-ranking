@@ -58,7 +58,10 @@ export const Config = Schema.intersect([
           '.help',
         ]),
     }).description('显示过滤配置'),
-  ]),
+    Schema.object({
+      enableDisplayFilter: Schema.const(false).required(),
+    }),
+  ])
 ])
 
 /**
@@ -331,7 +334,8 @@ export async function apply(ctx: Context, config: Config = {}) {
               limit: 15,
             }
           )
-          return session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+          await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+          return
         } catch (e) {
           ctx.logger.error('生成命令统计图片失败:', e)
         }
@@ -390,7 +394,8 @@ export async function apply(ctx: Context, config: Config = {}) {
               limit: 15,
             }
           )
-          return session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+          await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+          return
         } catch (e) {
           ctx.logger.error('生成用户统计图片失败:', e)
         }
@@ -450,7 +455,8 @@ export async function apply(ctx: Context, config: Config = {}) {
               limit: 15,
             }
           )
-          return session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+          await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+          return
         } catch (e) {
           ctx.logger.error('生成群组统计图片失败:', e)
         }
