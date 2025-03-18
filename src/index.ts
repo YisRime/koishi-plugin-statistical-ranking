@@ -169,7 +169,7 @@ export async function apply(ctx: Context, config: Config = {}) {
    * 主统计命令
    * 用于查看用户的个人统计信息
    */
-  const stat = ctx.command('stat [arg:string]', '查看个人统计信息')
+  const stat = ctx.command('stat [arg:string]', '查看统计信息')
     .action(async ({ session, args }) => {
       // 获取用户信息和解析参数
       const userInfo = await utils.getSessionInfo(session)
@@ -242,7 +242,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({options, args, session}) => {
+    .action(async ({options, args}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -276,7 +276,7 @@ export async function apply(ctx: Context, config: Config = {}) {
   stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
-    .action(async ({options, args, session}) => {
+    .action(async ({options, args}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
@@ -311,7 +311,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
-    .action(async ({options, args, session}) => {
+    .action(async ({options, args}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
       let showAll = false
