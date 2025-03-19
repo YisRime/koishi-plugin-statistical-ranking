@@ -94,6 +94,7 @@ export const database = {
       .option('platform', '-p [platform:string] 指定平台')
       .option('guild', '-g [guild:string] 指定群组')
       .option('command', '-c [command:string] 指定命令')
+      .option('below', '-b [count:number] 删除少于指定次数的记录', { fallback: 0 })
       .action(async ({ options }) => {
         // 转换选项键名以匹配数据库字段名
         const cleanOptions = {
@@ -102,23 +103,43 @@ export const database = {
           guildId: options.guild,
           command: options.command
         }
-        // 检查是否有任何条件被指定
-        if (!Object.values(cleanOptions).some(Boolean)) {
+        // 检查是否只指定了below选项
+        const onlyBelowSpecified = options.below > 0 &&
+          !Object.values(cleanOptions).some(Boolean);
+        // 检查是否没有指定任何条件
+        if (!options.below && !Object.values(cleanOptions).some(Boolean)) {
           ctx.logger.info('正在删除所有统计记录并重建数据表...')
           await ctx.database.drop('analytics.stat')
           await this.initialize(ctx)
           ctx.logger.info('已删除所有统计记录')
           return '已删除所有统计记录'
         }
-        // 删除匹配条件的记录
-        const query = Utils.filterObject(cleanOptions)
+        // 构建查询条件
+        const query: any = Utils.filterObject(cleanOptions)
+        // 添加记录数阈值条件
+        if (options.below > 0) {
+          query.count = { $lt: options.below }
+        }
+        // 统计将要删除的记录数
+        const recordsToDelete = await ctx.database.get('analytics.stat', query, ['id'])
+        const deleteCount = recordsToDelete.length
+        // 执行删除操作
         await ctx.database.remove('analytics.stat', query)
-        ctx.logger.info(`已删除所选统计记录`)
         // 构建条件描述
         const conditions = Utils.buildConditions(options)
-        return conditions.length
-          ? `已删除${conditions.join('、')}的统计记录`
+        let message = conditions.length
+          ? `已删除${conditions.join('、')}的统计记录（共${deleteCount}条）`
           : `已删除所有统计记录`
+        // 添加阈值信息和删除数量
+        if (options.below > 0) {
+          message = onlyBelowSpecified
+            ? `已删除所有少于${options.below}次的统计记录（共${deleteCount}条）`
+            : `已删除${message}中少于${options.below}次的统计记录（共${deleteCount}条）`
+        } else {
+          message += `（共${deleteCount}条）`
+        }
+
+        return message
       })
   }
 }

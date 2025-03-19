@@ -158,7 +158,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     rendererInitialized = true
 
     if (!ctx.puppeteer) {
-      ctx.logger.warn('未检测到 puppeteer 插件，图片渲染功能不可用。')
+      ctx.logger.warn('无 puppeteer 服务，无法渲染图片')
       return null
     }
 
@@ -213,7 +213,7 @@ export async function apply(ctx: Context, config: Config = {}) {
   const stat = ctx.command('stat [arg:string]', '查看统计信息')
     .option('visual', '-v 切换可视化模式')
     .option('sort', '-s [method:string] 排序方式', { fallback: 'count' })
-    .option('user', '-u [userId:string] 指定查看用户')
+    .option('user', '-u [userId:string] 指定用户', { authority: 2 })
     .action(async ({ session, args, options }) => {
       // 获取用户信息和解析参数
       const currentUser = await Utils.getSessionInfo(session)
