@@ -94,7 +94,8 @@ export const database = {
       .option('platform', '-p [platform:string] 指定平台')
       .option('guild', '-g [guild:string] 指定群组')
       .option('command', '-c [command:string] 指定命令')
-      .option('below', '-b [count:number] 删除少于指定次数的记录', { fallback: 0 })
+      .option('below', '-b [count:number] 少于指定次数', { fallback: 0 })
+      .option('time', '-t [days:number] 指定天数之前', { fallback: 0 })
       .action(async ({ options }) => {
         // 转换选项键名以匹配数据库字段名
         const cleanOptions = {
@@ -103,11 +104,13 @@ export const database = {
           guildId: options.guild,
           command: options.command
         }
-        // 检查是否只指定了below选项
+        // 检查是否只指定了below选项或time选项
         const onlyBelowSpecified = options.below > 0 &&
-          !Object.values(cleanOptions).some(Boolean);
+          !Object.values(cleanOptions).some(Boolean) && options.time <= 0;
+        const onlyBeforeSpecified = options.time > 0 &&
+          !Object.values(cleanOptions).some(Boolean) && options.below <= 0;
         // 检查是否没有指定任何条件
-        if (!options.below && !Object.values(cleanOptions).some(Boolean)) {
+        if (!options.below && !options.time && !Object.values(cleanOptions).some(Boolean)) {
           ctx.logger.info('正在删除所有统计记录并重建数据表...')
           await ctx.database.drop('analytics.stat')
           await this.initialize(ctx)
@@ -120,6 +123,12 @@ export const database = {
         if (options.below > 0) {
           query.count = { $lt: options.below }
         }
+        // 添加时间阈值条件
+        if (options.time > 0) {
+          const cutoffDate = new Date();
+          cutoffDate.setDate(cutoffDate.getDate() - options.time);
+          query.lastTime = { $lt: cutoffDate };
+        }
         // 统计将要删除的记录数
         const recordsToDelete = await ctx.database.get('analytics.stat', query, ['id'])
         const deleteCount = recordsToDelete.length
@@ -131,12 +140,18 @@ export const database = {
           ? `已删除${conditions.join('、')}的统计记录（共${deleteCount}条）`
           : `已删除所有统计记录`
         // 添加阈值信息和删除数量
-        if (options.below > 0) {
+        const belowText = options.below > 0 ? `少于${options.below}次` : '';
+        const beforeText = options.time > 0 ? `${options.time}天前` : '';
+        const thresholdText = [belowText, beforeText].filter(Boolean).join('且');
+
+        if (thresholdText) {
           message = onlyBelowSpecified
             ? `已删除所有少于${options.below}次的统计记录（共${deleteCount}条）`
-            : `已删除${message}中少于${options.below}次的统计记录（共${deleteCount}条）`
+            : onlyBeforeSpecified
+              ? `已删除所有${options.time}天前的统计记录（共${deleteCount}条）`
+              : `已删除${message}中${thresholdText}的统计记录（共${deleteCount}条）`;
         } else {
-          message += `（共${deleteCount}条）`
+          message += `（共${deleteCount}条）`;
         }
 
         return message
