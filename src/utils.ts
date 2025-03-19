@@ -360,10 +360,26 @@ export const utils = {
 
     const records = await ctx.database.get('analytics.stat', query)
     if (!records?.length) return '未找到记录'
+    // 查找并获取用户和群组的昵称
+    let userName = '', guildName = ''
+    if (options.user) {
+      // 尝试从记录中获取用户昵称
+      const userRecord = records.find(r => r.userId === options.user && r.userName)
+      if (userRecord?.userName) {
+        userName = userRecord.userName
+      }
+    }
+    if (options.guild) {
+      // 尝试从记录中获取群组昵称
+      const guildRecord = records.find(r => r.guildId === options.guild && r.guildName)
+      if (guildRecord?.guildName) {
+        guildName = guildRecord.guildName
+      }
+    }
 
     const conditions = Object.entries({
-      user: ['用户', options.user],
-      guild: ['群组', options.guild],
+      user: ['用户', options.user ? (userName || options.user) : null],
+      guild: ['群组', options.guild ? (guildName || options.guild) : null],
       platform: ['平台', options.platform],
       command: ['命令', options.command]
     })

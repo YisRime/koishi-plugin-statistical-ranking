@@ -36,14 +36,14 @@ export interface Config {
  */
 export const Config = Schema.intersect([
   Schema.object({
-    enableClear: Schema.boolean().default(true).description('启用统计数据清除'),
-    enableDataTransfer: Schema.boolean().default(true).description('启用统计数据导入导出'),
-    defaultImageMode: Schema.boolean().default(false).description('默认使用图片模式展示'),
+    enableClear: Schema.boolean().default(true).description('启用数据清除'),
+    enableDataTransfer: Schema.boolean().default(true).description('启用导入导出'),
+    defaultImageMode: Schema.boolean().default(false).description('默认渲染图片'),
     displayWhitelist: Schema.array(Schema.string())
       .description('显示白名单：仅展示以下记录（优先级高于黑名单）')
       .default([]),
     displayBlacklist: Schema.array(Schema.string())
-      .description('显示黑名单：不默认显示以下记录(platform:guildId:userId/.command)')
+      .description('显示黑名单：不默认展示以下记录(platform:guild:user/.command)')
       .default([
         'qq:1234:5678',
         '.message',
@@ -132,7 +132,7 @@ interface BindingRecord {
  * @param config - 插件配置对象
  */
 export async function apply(ctx: Context, config: Config = {}) {
-  // 确保配置对象有默认值
+
   config = {
     enableClear: true,
     enableDataTransfer: true,
@@ -227,17 +227,14 @@ export async function apply(ctx: Context, config: Config = {}) {
       const title = `${userName}的统计（共${totalMessages}条）${pageInfo} ——`;
       // 获取渲染内容
       const items = pagedItems.map(item => item.content);
-
-      // 确定使用文本还是图片模式展示
+      // 确定模式
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
-
-      // 如果使用图片模式并且puppeteer可用
+      // 图片模式
       if (useImageMode && ctx.puppeteer) {
         try {
           // 准备数据集
           const datasets = [];
           let commandCount = 0;
-
           // 加入命令统计数据
           if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
             commandCount = commandResult.records.length;
@@ -248,7 +245,6 @@ export async function apply(ctx: Context, config: Config = {}) {
               options: { limit: 15, truncateId: false }
             });
           }
-
           // 加入群组统计数据
           if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
             datasets.push({
@@ -258,14 +254,12 @@ export async function apply(ctx: Context, config: Config = {}) {
               options: { limit: 15, truncateId: true }
             });
           }
-
           // 准备汇总数据
           const summaryData = [
             { label: '消息总数', value: totalMessages },
             { label: '活跃群组', value: typeof messageResult !== 'string' ? messageResult.records.length : 0 },
             { label: '使用命令', value: commandCount },
           ];
-
           // 生成综合统计图
           const imageBuffer = await render.generateCombinedStatImage(
             ctx,
@@ -273,15 +267,12 @@ export async function apply(ctx: Context, config: Config = {}) {
             `${userName}的统计数据`,
             summaryData
           );
-
           await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')));
           return;
         } catch (e) {
           ctx.logger.error('生成统计图片失败:', e);
-          // 出错时降级为文本模式
         }
       }
-
       // 文本模式输出
       return title + '\n' + items.join('\n');
     })
@@ -309,7 +300,6 @@ export async function apply(ctx: Context, config: Config = {}) {
       if (typeof result === 'string') return result
 
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
-
       // 图片渲染逻辑
       if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
         try {
@@ -369,7 +359,6 @@ export async function apply(ctx: Context, config: Config = {}) {
       if (typeof result === 'string') return result
 
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
-
       // 图片渲染逻辑
       if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
         try {
@@ -430,7 +419,6 @@ export async function apply(ctx: Context, config: Config = {}) {
       if (typeof result === 'string') return result
 
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
-
       // 图片渲染逻辑
       if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
         try {
