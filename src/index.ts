@@ -1,8 +1,9 @@
 import { Context, Schema, h } from 'koishi'
 import { database } from './database'
 import { io } from './io'
-import { utils } from './utils'
-import * as render from './render'
+import { Utils } from './utils'
+import { statProcessor } from './stat'
+import { Renderer } from './render'
 
 /**
  * @packageDocumentation
@@ -141,8 +142,13 @@ export async function apply(ctx: Context, config: Config = {}) {
     displayBlacklist: [],
     ...config
   }
-
   database.initialize(ctx)
+
+  // 创建渲染器实例
+  let renderer: Renderer
+  if (ctx.puppeteer) {
+    renderer = new Renderer(ctx)
+  }
 
   /**
    * 处理消息和命令记录
@@ -151,7 +157,7 @@ export async function apply(ctx: Context, config: Config = {}) {
    * @returns {Promise<void>}
    */
   const handleRecord = async (session: any, command?: string) => {
-    const info = await utils.getSessionInfo(session)
+    const info = await Utils.getSessionInfo(session)
     if (!info) return
 
     const commandValue = command || '_message'
@@ -169,19 +175,19 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('visual', '-v 切换可视化模式')
     .action(async ({ session, args, options }) => {
       // 获取用户信息和解析参数
-      const userInfo = await utils.getSessionInfo(session)
+      const userInfo = await Utils.getSessionInfo(session)
       const arg = args[0]?.toLowerCase()
       let page = arg && /^\d+$/.test(arg) ? parseInt(arg) : 1
       const showAll = arg === 'all'
       // 获取命令统计和群组统计
       const [commandResult, messageResult] = await Promise.all([
         // 命令统计查询
-        utils.handleStatQuery(ctx, {
+        statProcessor.handleStatQuery(ctx, {
           user: userInfo.userId,
           platform: userInfo.platform
         }, 'command'),
         // 消息统计查询
-        utils.handleStatQuery(ctx, {
+        statProcessor.handleStatQuery(ctx, {
           user: userInfo.userId,
           platform: userInfo.platform,
           command: '_message'
@@ -195,7 +201,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       const allItems = [];
       // 处理命令统计
       if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
-        const processedCommands = await utils.processStatRecords(commandResult.records, 'command', {
+        const processedCommands = await statProcessor.processStatRecords(commandResult.records, 'command', {
           sortBy: 'count',
           disableCommandMerge: false,
           skipPaging: true,
@@ -205,7 +211,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       }
       // 处理群组统计
       if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
-        const processedGroups = await utils.processStatRecords(messageResult.records, 'guildId', {
+        const processedGroups = await statProcessor.processStatRecords(messageResult.records, 'guildId', {
           sortBy: 'count',
           truncateId: true,
           skipPaging: true,
@@ -234,10 +240,8 @@ export async function apply(ctx: Context, config: Config = {}) {
         try {
           // 准备数据集
           const datasets = [];
-          let commandCount = 0;
           // 加入命令统计数据
           if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
-            commandCount = commandResult.records.length;
             datasets.push({
               records: commandResult.records,
               title: '命令统计',
@@ -254,10 +258,8 @@ export async function apply(ctx: Context, config: Config = {}) {
               options: { limit: 15, truncateId: true }
             });
           }
-
           // 生成综合统计图
-          const imageBuffer = await render.generateCombinedStatImage(
-            ctx,
+          const imageBuffer = await renderer.generateCombinedStatImage(
             datasets,
             `${userName}的统计`
           );
@@ -290,15 +292,14 @@ export async function apply(ctx: Context, config: Config = {}) {
         page = parseInt(arg)
       }
 
-      const result = await utils.handleStatQuery(ctx, options, 'command')
+      const result = await statProcessor.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
 
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
       if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
         try {
-          const imageBuffer = await render.generateStatImage(
-            ctx,
+          const imageBuffer = await renderer.generateStatImage(
             result.records,
             'command',
             result.title.replace(' ——', ''),
@@ -317,7 +318,7 @@ export async function apply(ctx: Context, config: Config = {}) {
         }
       }
 
-      const processed = await utils.processStatRecords(result.records, 'command', {
+      const processed = await statProcessor.processStatRecords(result.records, 'command', {
         sortBy: 'count',
         disableCommandMerge: showAll,
         displayBlacklist: showAll ? [] : config.displayBlacklist,
@@ -349,15 +350,14 @@ export async function apply(ctx: Context, config: Config = {}) {
         page = parseInt(arg)
       }
 
-      const result = await utils.handleStatQuery(ctx, options, 'user')
+      const result = await statProcessor.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
 
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
       if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
         try {
-          const imageBuffer = await render.generateStatImage(
-            ctx,
+          const imageBuffer = await renderer.generateStatImage(
             result.records,
             'userId',
             result.title.replace(' ——', ''),
@@ -376,7 +376,7 @@ export async function apply(ctx: Context, config: Config = {}) {
         }
       }
 
-      const processed = await utils.processStatRecords(result.records, 'userId', {
+      const processed = await statProcessor.processStatRecords(result.records, 'userId', {
         sortBy: 'count',
         truncateId: true,
         displayBlacklist: showAll ? [] : config.displayBlacklist,
@@ -409,15 +409,14 @@ export async function apply(ctx: Context, config: Config = {}) {
         page = parseInt(arg)
       }
 
-      const result = await utils.handleStatQuery(ctx, options, 'guild')
+      const result = await statProcessor.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
 
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
       if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
         try {
-          const imageBuffer = await render.generateStatImage(
-            ctx,
+          const imageBuffer = await renderer.generateStatImage(
             result.records,
             'guildId',
             result.title.replace(' ——', ''),
@@ -436,7 +435,7 @@ export async function apply(ctx: Context, config: Config = {}) {
         }
       }
 
-      const processed = await utils.processStatRecords(result.records, 'guildId', {
+      const processed = await statProcessor.processStatRecords(result.records, 'guildId', {
         sortBy: 'count',
         truncateId: true,
         displayBlacklist: showAll ? [] : config.displayBlacklist,
@@ -450,55 +449,16 @@ export async function apply(ctx: Context, config: Config = {}) {
       return processed.title + '\n' + processed.items.join('\n');
     })
 
-  /**
-   * 列表查看子命令
-   * 用于查看所有用户或群组列表
-   */
-  stat.subcommand('.list', '查看类型列表', { authority: 3 })
-    .option('user', '-u 显示用户列表')
-    .option('guild', '-g 显示群组列表')
-    .action(async ({ options }) => {
-      return utils.handleListCommand(ctx, options)
-    })
+  // 注册列表查看子命令
+  statProcessor.registerListCommand(ctx, stat)
 
   if (config.enableClear) {
-    /**
-     * 统计数据清除子命令
-     * 用于清除特定条件下的统计数据
-     */
-    stat.subcommand('.clear', '清除统计数据', { authority: 4 })
-      .option('user', '-u [user:string] 指定用户')
-      .option('platform', '-p [platform:string] 指定平台')
-      .option('guild', '-g [guild:string] 指定群组')
-      .option('command', '-c [command:string] 指定命令')
-      .action(async ({ options }) => {
-        return utils.handleClearCommand(ctx, options)
-      })
+    // 注册清除命令
+    database.registerClearCommand(ctx, stat)
   }
 
   if (config.enableDataTransfer) {
-    /**
-     * 统计数据导出子命令
-     * 用于导出特定条件下的统计数据到文件
-     */
-    stat.subcommand('.export', '导出统计数据', { authority: 4 })
-      .option('user', '-u [user:string] 指定用户')
-      .option('platform', '-p [platform:string] 指定平台')
-      .option('guild', '-g [guild:string] 指定群组')
-      .option('command', '-c [command:string] 指定命令')
-      .action(async ({ options, session }) => {
-        return io.handleExportCommand(ctx, session, options)
-      })
-
-    /**
-     * 统计数据导入子命令
-     * 用于从文件导入统计数据或从历史数据库导入
-     */
-    stat.subcommand('.import [selector:number]', '导入统计数据', { authority: 4 })
-      .option('force', '-f 覆盖现有数据')
-      .option('database', '-d 从历史数据库导入')
-      .action(async ({ session, options, args }) => {
-        return io.handleImportCommand(ctx, session, options, args[0])
-      })
+    // 注册导入导出命令
+    io.registerCommands(ctx, stat)
   }
 }

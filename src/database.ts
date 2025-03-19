@@ -1,6 +1,6 @@
 import { Context } from 'koishi'
 import { StatRecord } from './index'
-import { utils } from './utils'
+import { Utils } from './utils'
 
 /**
  * @internal
@@ -48,8 +48,9 @@ export const database = {
         command: data.command
       }
 
-      const userName = data.userName !== undefined ? utils.sanitizeString(data.userName) : undefined
-      const guildName = data.guildName !== undefined ? utils.sanitizeString(data.guildName) : undefined
+      const normalizedData = Utils.normalizeRecord(data, { sanitizeNames: true });
+      const userName = normalizedData.userName;
+      const guildName = normalizedData.guildName;
 
       const [existing] = await ctx.database.get('analytics.stat', query)
       if (existing) {
@@ -79,32 +80,45 @@ export const database = {
   },
 
   /**
-   * 清除统计数据
-   * @param ctx Koishi上下文
-   * @param options 清除选项
-   * @returns 清除的记录数量
+   * 注册清除命令
+   * @param {Context} ctx Koishi 上下文
+   * @param {any} parent 父命令对象
    */
-  async clearStats(ctx: Context, options: {
-    userId?: string
-    platform?: string
-    guildId?: string
-    command?: string
-  }) {
-
-    if (!Object.values(options).some(Boolean)) {
-      ctx.logger.info('正在删除所有统计记录并重建数据表...')
-      await ctx.database.drop('analytics.stat')
-      await database.initialize(ctx)
-      ctx.logger.info('已删除所有统计记录')
-      return -1
-    }
-
-    const query = Object.fromEntries(
-      Object.entries(options).filter(([_, value]) => Boolean(value))
-    )
-    const result = await ctx.database.remove('analytics.stat', query)
-    ctx.logger.info(`已删除所选统计记录`)
-
-    return Number(result ?? 0)
+  registerClearCommand(ctx: Context, parent: any) {
+    /**
+     * 统计数据清除子命令
+     * 用于清除特定条件下的统计数据
+     */
+    parent.subcommand('.clear', '清除统计数据', { authority: 4 })
+      .option('user', '-u [user:string] 指定用户')
+      .option('platform', '-p [platform:string] 指定平台')
+      .option('guild', '-g [guild:string] 指定群组')
+      .option('command', '-c [command:string] 指定命令')
+      .action(async ({ options }) => {
+        // 转换选项键名以匹配数据库字段名
+        const cleanOptions = {
+          userId: options.user,
+          platform: options.platform,
+          guildId: options.guild,
+          command: options.command
+        }
+        // 检查是否有任何条件被指定
+        if (!Object.values(cleanOptions).some(Boolean)) {
+          ctx.logger.info('正在删除所有统计记录并重建数据表...')
+          await ctx.database.drop('analytics.stat')
+          await this.initialize(ctx)
+          ctx.logger.info('已删除所有统计记录')
+          return '已删除所有统计记录'
+        }
+        // 删除匹配条件的记录
+        const query = Utils.filterObject(cleanOptions)
+        await ctx.database.remove('analytics.stat', query)
+        ctx.logger.info(`已删除所选统计记录`)
+        // 构建条件描述
+        const conditions = Utils.buildConditions(options)
+        return conditions.length
+          ? `已删除${conditions.join('、')}的统计记录`
+          : `已删除所有统计记录`
+      })
   }
 }

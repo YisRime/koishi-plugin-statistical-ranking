@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-statistical-ranking",
   "description": "统计群组内的命令使用和成员发言数据，支持按用户/群组/平台筛选展示",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "contributors": [
     "Yis_Rime <yis_rime@outlook.com>"
   ],

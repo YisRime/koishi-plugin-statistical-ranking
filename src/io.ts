@@ -1,20 +1,8 @@
-import { Context, Session } from 'koishi'
+import { Context } from 'koishi'
 import { StatRecord } from './index'
-import { utils } from './utils'
+import { Utils } from './utils'
 import * as fs from 'fs'
 import * as path from 'path'
-
-/**
- * 获取统计数据目录，如果目录不存在则创建
- * @returns {string} 统计数据目录的绝对路径
- */
-function getStatDirectory(): string {
-  const statDir = path.join(process.cwd(), 'data', 'stat')
-  if (!fs.existsSync(statDir)) {
-    fs.mkdirSync(statDir, { recursive: true })
-  }
-  return statDir
-}
 
 /**
  * 统计数据导入导出工具集
@@ -36,8 +24,8 @@ export const io = {
   async exportToFile(ctx: Context, filename: string, options: {
     userId?: string, platform?: string, guildId?: string, command?: string, batchSize?: number
   }) {
-    const query = Object.fromEntries(
-      Object.entries(options).filter(([k, v]) => k !== 'batchSize' && Boolean(v))
+    const query = Utils.filterObject(
+      Object.assign({}, options, {batchSize: undefined})
     );
 
     const records = await ctx.database.get('analytics.stat', query)
@@ -48,6 +36,7 @@ export const io = {
     const totalRecords = records.length
     const batches = Math.ceil(totalRecords / batchSize)
     const exportFiles = []
+    const statDir = Utils.getDataDirectory()
 
     for (let batch = 0; batch < batches; batch++) {
       const start = batch * batchSize
@@ -57,7 +46,7 @@ export const io = {
       const outputFilename = batches === 1
         ? `${filename}-${timestamp}.json`
         : `${filename}-${timestamp}-${batch+1}-${batches}.json`
-      const filePath = path.join(getStatDirectory(), outputFilename)
+      const filePath = path.join(statDir, outputFilename)
 
       try {
         fs.writeFileSync(
@@ -88,7 +77,8 @@ export const io = {
    */
   async listImportFiles(ctx: Context) {
     try {
-      const files = await fs.promises.readdir(getStatDirectory())
+      const statDir = Utils.getDataDirectory()
+      const files = await fs.promises.readdir(statDir)
       const statFiles = files.filter(file =>
         file.endsWith('.json') && (file.includes('stat') || file.includes('analytics'))
       )
@@ -99,7 +89,7 @@ export const io = {
       const batchGroups = new Map()
       // 处理文件信息
       for (const file of statFiles) {
-        const stats = await fs.promises.stat(path.join(getStatDirectory(), file))
+        const stats = await fs.promises.stat(path.join(statDir, file))
         const batchMatch = file.match(/(.*)-(\d+)-(\d+)\.json$/)
         const isBatch = !!batchMatch
 
@@ -175,7 +165,7 @@ export const io = {
    * @throws {Error} 导入失败时抛出错误
    */
   async importFromFile(ctx: Context, filename: string, overwrite = false) {
-    const dataDir = getStatDirectory()
+    const dataDir = Utils.getDataDirectory()
     let files = []
 
     try {
@@ -324,7 +314,7 @@ export const io = {
         }
 
         const { id, ...rest } = record
-        validRecords.push({
+        validRecords.push(Utils.normalizeRecord({
           ...rest,
           platform: rest.platform,
           guildId: rest.guildId,
@@ -334,7 +324,7 @@ export const io = {
           command: rest.command,
           count: parseInt(String(rest.count)) || 1,
           lastTime: rest.lastTime ? new Date(rest.lastTime) : new Date()
-        })
+        }, { sanitizeNames: true }))
       }
 
       return { validRecords, totalRecords: data.length, invalidRecords }
@@ -352,20 +342,6 @@ export const io = {
   async importRecords(ctx: Context, records: StatRecord[]) {
     let imported = 0, errors = 0
     const batchSize = 100
-
-    /**
-     * 处理名称，去除无效内容
-     * @param {string} name 原始名称
-     * @param {string} id 相关ID
-     * @returns {string} 处理后的名称
-     */
-    const processName = (name: string, id: string): string => {
-      if (!name) return '';
-      const cleanName = utils.sanitizeString(name);
-      if (!cleanName || /^[\s*□]+$/.test(cleanName)) return '';
-      if (id && (cleanName === id || cleanName.includes(id))) return '';
-      return cleanName;
-    };
     // 分批处理
     for (let i = 0; i < records.length; i += batchSize) {
       const batch = records.slice(i, i + batchSize)
@@ -384,13 +360,13 @@ export const io = {
           if (existing) {
             // 更新现有记录
             const existingUserName = existing.userName?.trim() || '';
-            const recordUserName = processName(record.userName, record.userId);
+            const recordUserName = Utils.sanitizeString(record.userName || '');
             const newUserName = existingUserName && recordUserName
               ? (record.lastTime > existing.lastTime ? recordUserName : existingUserName)
               : (existingUserName || recordUserName);
 
             const existingGuildName = existing.guildName?.trim() || '';
-            const recordGuildName = processName(record.guildName, record.guildId);
+            const recordGuildName = Utils.sanitizeString(record.guildName || '');
             const newGuildName = existingGuildName && recordGuildName
               ? (record.lastTime > existing.lastTime ? recordGuildName : existingGuildName)
               : (existingGuildName || recordGuildName);
@@ -407,8 +383,8 @@ export const io = {
               ...query,
               count: record.count || 1,
               lastTime: record.lastTime || new Date(),
-              userName: processName(record.userName, record.userId),
-              guildName: processName(record.guildName, record.guildId)
+              userName: Utils.sanitizeString(record.userName || ''),
+              guildName: Utils.sanitizeString(record.guildName || '')
             })
           }
           imported++
@@ -422,96 +398,94 @@ export const io = {
   },
 
   /**
-   * 处理导出命令
+   * 注册导入导出命令
    * @param {Context} ctx Koishi 上下文
-   * @param {Session} session 会话对象
-   * @param {Object} options 导出选项
-   * @returns {Promise<string>} 导出结果消息
+   * @param {any} parent 父命令对象
    */
-  async handleExportCommand(ctx: Context, session: Session, options: {
-    user?: string, platform?: string, guild?: string, command?: string
-  }): Promise<string> {
-    try {
-      // 发送进度提示
-      if (Object.values(options).some(Boolean)) {
-        await session.send('正在导出...')
-      }
-
-      // 执行导出
-      const result = await this.exportToFile(ctx, 'stat', {
-        userId: options.user,
-        platform: options.platform,
-        guildId: options.guild,
-        command: options.command
+  registerCommands(ctx: Context, parent: any) {
+    /**
+     * 统计数据导出子命令
+     * 用于导出特定条件下的统计数据到文件
+     */
+    parent.subcommand('.export', '导出统计数据', { authority: 4 })
+      .option('user', '-u [user:string] 指定用户')
+      .option('platform', '-p [platform:string] 指定平台')
+      .option('guild', '-g [guild:string] 指定群组')
+      .option('command', '-c [command:string] 指定命令')
+      .action(async ({ options, session }) => {
+        try {
+          // 发送进度提示
+          if (Object.values(options).some(Boolean)) {
+            await session.send('正在导出...')
+          }
+          // 执行导出
+          const result = await this.exportToFile(ctx, 'stat', {
+            userId: options.user,
+            platform: options.platform,
+            guildId: options.guild,
+            command: options.command
+          })
+          // 返回导出结果消息
+          if (result.batches === 1) {
+            return `导出成功（${result.count}条）：\n- ${result.files[0].filename}`
+          } else {
+            const fileList = result.files.map(f => `- ${f.filename}`).join('\n')
+            return `导出成功（${result.count}条）：\n${fileList}`
+          }
+        } catch (e) {
+          return `导出失败：${e.message}`
+        }
       })
 
-      // 返回导出结果消息
-      if (result.batches === 1) {
-        return `导出成功（${result.count}条）：\n- ${result.files[0].filename}`
-      } else {
-        const fileList = result.files.map(f => `- ${f.filename}`).join('\n')
-        return `导出成功（${result.count}条）：\n${fileList}`
-      }
-    } catch (e) {
-      return `导出失败：${e.message}`
-    }
-  },
-
-  /**
-   * 处理导入命令
-   * @param {Context} ctx Koishi 上下文
-   * @param {Session} session 会话对象
-   * @param {Object} options 导入选项
-   * @param {boolean} [options.force] 是否覆盖现有数据
-   * @param {boolean} [options.database] 是否从历史数据库导入
-   * @param {number} [selector] 文件选择器序号
-   * @returns {Promise<string>} 导入结果消息
-   */
-  async handleImportCommand(ctx: Context, session: Session, options: {
-    force?: boolean, database?: boolean
-  }, selector?: number): Promise<string> {
-    try {
-      // 从历史数据库导入
-      if (options.database) {
-        session.send('正在导入历史记录...')
+    /**
+     * 统计数据导入子命令
+     * 用于从文件导入统计数据或从历史数据库导入
+     */
+    parent.subcommand('.import [selector:number]', '导入统计数据', { authority: 4 })
+      .option('force', '-f 覆盖现有数据')
+      .option('database', '-d 从历史数据库导入')
+      .action(async ({ session, options, args }) => {
         try {
-          return await this.importLegacyData(ctx, options.force)
+          // 从历史数据库导入
+          if (options.database) {
+            session.send('正在导入历史记录...')
+            try {
+              return await this.importLegacyData(ctx, options.force)
+            } catch (e) {
+              return e.message
+            }
+          }
+          // 获取可导入文件列表
+          const { files, fileInfo } = await this.listImportFiles(ctx)
+          if (!files.length) {
+            return '未找到历史记录文件'
+          }
+          // 使用序号选择文件导入
+          const selector = args[0]
+          if (selector) {
+            if (selector > 0 && selector <= files.length) {
+              const targetFile = files[selector - 1]
+              await session.send(`正在${options.force ? '覆盖' : ''}导入文件：\n- ${targetFile}`)
+              return await this.importFromFile(ctx, targetFile, options.force)
+            }
+            return '请输入正确的序号'
+          }
+          // 显示文件列表
+          const fileList = files.map((file, index) => {
+            const info = fileInfo[file] || {}
+            let prefix = '📄'
+            if (file.includes('(N=')) {
+              prefix = '📦'
+            } else if (info.isBatch) {
+              prefix = '📎'
+            }
+            return `${index + 1}.${prefix}${file}`
+          }).join('\n')
+
+          return `使用 import [序号]导入对应文件：\n${fileList}`
         } catch (e) {
-          return e.message
+          return `导入失败：${e.message}`
         }
-      }
-
-      // 获取可导入文件列表
-      const { files, fileInfo } = await this.listImportFiles(ctx)
-      if (!files.length) {
-        return '未找到历史记录文件'
-      }
-
-      // 使用序号选择文件导入
-      if (selector) {
-        if (selector > 0 && selector <= files.length) {
-          const targetFile = files[selector - 1]
-          await session.send(`正在${options.force ? '覆盖' : ''}导入文件：\n- ${targetFile}`)
-          return await this.importFromFile(ctx, targetFile, options.force)
-        }
-        return '请输入正确的序号'
-      }
-
-      // 显示文件列表
-      const fileList = files.map((file, index) => {
-        const info = fileInfo[file] || {}
-        let prefix = '📄'
-        if (file.includes('(N=')) {
-          prefix = '📦'
-        } else if (info.isBatch) {
-          prefix = '📎'
-        }
-        return `${index + 1}.${prefix}${file}`
-      }).join('\n')
-
-      return `使用 import [序号]导入对应文件：\n${fileList}`
-    } catch (e) {
-      return `导入失败：${e.message}`
-    }
+      })
   }
 }

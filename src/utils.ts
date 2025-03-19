@@ -1,79 +1,11 @@
-import { Context } from 'koishi'
-import { StatRecord } from './index'
+import * as fs from 'fs'
+import * as path from 'path'
 
 /**
- * 统计查询选项接口
- * @interface QueryOptions
+ * 通用工具函数集合
+ * 提供字符串处理、时间格式化、文件操作等基础功能
  */
-interface QueryOptions {
-  user?: string
-  guild?: string
-  platform?: string
-  command?: string
-}
-
-/**
- * 统计数据处理选项接口
- * @interface StatProcessOptions
- * @property {'key' | 'count'} [sortBy] - 排序方式，按键名或计数排序
- * @property {number} [limit] - 限制返回的条目数量
- * @property {boolean} [disableCommandMerge] - 是否禁用命令合并
- * @property {boolean} [truncateId] - 是否缩短ID显示
- * @property {string[]} [displayBlacklist] - 显示黑名单
- * @property {string[]} [displayWhitelist] - 显示白名单
- * @property {number} [page] - 当前页码
- * @property {number} [pageSize] - 每页条目数
- * @property {string} [title] - 标题文本
- * @property {boolean} [skipPaging] - 是否跳过分页
- */
-export interface StatProcessOptions {
-  sortBy?: 'key' | 'count'
-  limit?: number
-  disableCommandMerge?: boolean
-  truncateId?: boolean
-  displayBlacklist?: string[]
-  displayWhitelist?: string[]
-  page?: number
-  pageSize?: number
-  title?: string
-  skipPaging?: boolean
-}
-
-/**
- * 统计数据聚合管理器
- * @class StatMap
- */
-class StatMap {
-  private data = new Map<string, { count: number, lastTime: Date }>()
-  constructor(private keyFormat: (key: string) => string = (k) => k) {}
-
-  /**
-   * 添加统计数据
-   * @param {string} key - 统计键
-   * @param {number} count - 计数值
-   * @param {Date} time - 时间戳
-   */
-  add(key: string, count: number, time: Date) {
-    const k = this.keyFormat(key) || ''
-    const curr = this.data.get(k) ?? { count: 0, lastTime: time }
-    curr.count += count
-    curr.lastTime = time > curr.lastTime ? time : curr.lastTime
-    this.data.set(k, curr)
-  }
-
-  /**
-   * 获取排序后的条目
-   * @param {'count' | 'key'} [sortBy='count'] - 排序方式
-   * @returns {Array<[string, {count: number, lastTime: Date}]>} 排序后的条目数组
-   */
-  sortedEntries(sortBy: 'count' | 'key' = 'count') {
-    return Array.from(this.data.entries()).sort((a, b) =>
-      sortBy === 'count' ? b[1].count - a[1].count : a[0].localeCompare(b[0])
-    )
-  }
-}
-
-export const utils = {
+export const Utils = {
   /**
    * 获取字符串显示宽度（中文字符计为2，其他字符计为1）
    * @param {string} str - 输入字符串
@@ -162,125 +94,32 @@ export const utils = {
   },
 
   /**
-   * 处理统计记录并格式化显示
-   * @param {StatRecord[]} records - 统计记录数组
-   * @param {keyof StatRecord} aggregateKey - 聚合键
-   * @param {StatProcessOptions} [options={}] - 处理选项
-   * @returns {Promise<{items: string[], page: number, totalPages: number, totalItems: number, title: string}>}
-   * 处理后的结果，包含格式化项目、分页信息和标题
+   * 格式化日期时间为年月日和24小时制
+   * @param {Date} date - 日期对象
+   * @returns {string} 格式化后的日期时间字符串
    */
-  async processStatRecords(records: StatRecord[], aggregateKey: keyof StatRecord, options: StatProcessOptions = {}) {
-    const {
-      sortBy = 'count',
-      limit,
-      disableCommandMerge = false,
-      truncateId = false,
-      displayBlacklist = [],
-      displayWhitelist = [],
-      page = 1,
-      pageSize = 15,
-      title = '',
-      skipPaging = false
-    } = options;
-    // 创建聚合器并过滤数据
-    const keyFormatter = (aggregateKey === 'command' && !disableCommandMerge)
-      ? (k: string) => k?.split('.')[0] || '' : undefined;
+  formatDateTime(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
 
-    const stats = new StatMap(keyFormatter);
-    const filteredRecords = (aggregateKey === 'command' && !disableCommandMerge)
-      ? records.filter(r => r.command !== '_message') : records;
-    // 名称映射和数据聚合
-    const nameMap = new Map<string, string>();
-    for (const record of filteredRecords) {
-      stats.add(record[aggregateKey] as string, record.count, record.lastTime);
-
-      if ((aggregateKey === 'userId' && record.userName) ||
-          (aggregateKey === 'guildId' && record.guildName)) {
-        nameMap.set(
-          record[aggregateKey] as string,
-          record[aggregateKey === 'userId' ? 'userName' : 'guildName']
-        );
-      }
-    }
-    // 过滤和分页
-    let entries = stats.sortedEntries(sortBy);
-    if (displayWhitelist.length || displayBlacklist.length) {
-      entries = entries.filter(([key]) => {
-        // 白名单优先：如果白名单不为空，必须匹配白名单中的任何一项
-        if (displayWhitelist.length) {
-          return displayWhitelist.some(pattern => key.includes(pattern));
-        }
-        // 黑名单：如果未匹配白名单，则不能匹配黑名单中的任何一项
-        return !displayBlacklist.some(pattern => key.includes(pattern));
-      });
-    }
-
-    const totalItems = entries.length;
-    let pagedEntries = entries;
-    let currentPage = 1, totalPages = 1;
-
-    if (!skipPaging) {
-      const effectiveLimit = limit ? Math.min(totalItems, limit) : totalItems;
-      totalPages = Math.ceil(effectiveLimit / pageSize) || 1;
-      currentPage = Math.min(Math.max(1, page), totalPages);
-
-      const startIdx = (currentPage - 1) * pageSize;
-      const endIdx = limit
-        ? Math.min(startIdx + pageSize, limit, totalItems)
-        : Math.min(startIdx + pageSize, totalItems);
-
-      pagedEntries = entries.slice(startIdx, endIdx);
-    }
-    // 格式化标题和项目
-    const formattedTitle = (!skipPaging && totalPages > 1)
-      ? `${title.endsWith(' ——') ? title.slice(0, -3) : title}（第${currentPage}/${totalPages}页）——`
-      : title;
-
-    const countWidth = 6, timeWidth = 10, nameWidth = 18;
-
-    const items = pagedEntries.map(([key, {count, lastTime}]) => {
-      const displayName = truncateId && nameMap.has(key)
-        ? (nameMap.get(key) || key) : (nameMap.get(key) || key);
-
-      const truncatedName = this.truncateByDisplayWidth(displayName, nameWidth);
-      const countStr = count.toString() + (aggregateKey === 'command' ? '次' : '条');
-      const truncatedCount = this.truncateByDisplayWidth(countStr, countWidth);
-      const timeAgo = this.formatTimeAgo(lastTime);
-      const truncatedTime = this.truncateByDisplayWidth(timeAgo, timeWidth);
-      const namePadding = ' '.repeat(Math.max(0, nameWidth - this.getStringDisplayWidth(truncatedName)));
-      const countPadding = ' '.repeat(Math.max(0, countWidth - this.getStringDisplayWidth(truncatedCount)));
-
-      return `${truncatedName}${namePadding} ${countPadding}${truncatedCount} ${truncatedTime}`;
-    });
-
-    return { items, page: currentPage, totalPages, totalItems, title: formattedTitle };
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   },
 
   /**
-   * 检查目标是否匹配规则列表中的任何规则
-   * @param {string[]} list - 规则列表
-   * @param {{platform: string, guildId: string, userId: string, command?: string}} target - 目标对象
-   * @returns {boolean} 是否匹配
+   * 获取数据目录
+   * @param {string} [subdir='stat'] 子目录名称
+   * @returns {string} 数据目录的绝对路径
    */
-  matchRuleList(list: string[], target: { platform: string, guildId: string, userId: string, command?: string }): boolean {
-    return list.some(rule => {
-      if (target.command && rule === target.command) return true
-      const [rulePlatform = '', ruleGuild = '', ruleUser = ''] = rule.split(':')
-      return (rulePlatform && target.platform === rulePlatform) ||
-             (ruleGuild && target.guildId === ruleGuild) ||
-             (ruleUser && target.userId === ruleUser) ||
-             (rule.endsWith(':') && target.platform && rule.startsWith(target.platform + ':'))
-    })
-  },
-
-  /**
-   * 获取记录中某个键的所有唯一值
-   * @param {StatRecord[]} records - 统计记录数组
-   * @param {keyof StatRecord} key - 要获取的键
-   * @returns {string[]} 唯一值数组
-   */
-  getUniqueKeys(records: StatRecord[], key: keyof StatRecord): string[] {
-    return [...new Set(records.map(r => r[key] as string).filter(Boolean))]
+  getDataDirectory(subdir: string = 'stat'): string {
+    const dataDir = path.join(process.cwd(), 'data', subdir)
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true })
+    }
+    return dataDir
   },
 
   /**
@@ -336,146 +175,42 @@ export const utils = {
   },
 
   /**
-   * 处理统计查询并返回结果
-   * @param {Context} ctx - Koishi上下文
-   * @param {QueryOptions} options - 查询选项
-   * @param {'command' | 'user' | 'guild'} type - 查询类型
-   * @returns {Promise<string | {records: StatRecord[], title: string}>} 查询结果或错误信息
+   * 过滤对象，移除空值
+   * @param {Record<string, any>} obj 要过滤的对象
+   * @returns {Record<string, any>} 过滤后的对象
    */
-  async handleStatQuery(ctx: Context, options: QueryOptions, type: 'command' | 'user' | 'guild') {
-    const query: Record<string, any> = {}
-    const typeMap = { command: '命令', user: '发言', guild: '群组' }
+  filterObject(obj: Record<string, any>): Record<string, any> {
+    return Object.fromEntries(
+      Object.entries(obj).filter(([_, value]) => Boolean(value))
+    )
+  },
 
-    if (options.user) query.userId = options.user
-    if (options.guild) query.guildId = options.guild
-    if (options.platform) query.platform = options.platform
-
-    if (type === 'user') {
-      query.command = '_message'
-    } else if (type === 'command') {
-      query.command = options.command || { $neq: '_message' }
-    } else if (options.command) {
-      query.command = options.command
-    }
-
-    const records = await ctx.database.get('analytics.stat', query)
-    if (!records?.length) return '未找到记录'
-    // 查找并获取用户和群组的昵称
-    let userName = '', guildName = ''
-    if (options.user) {
-      // 尝试从记录中获取用户昵称
-      const userRecord = records.find(r => r.userId === options.user && r.userName)
-      if (userRecord?.userName) {
-        userName = userRecord.userName
-      }
-    }
-    if (options.guild) {
-      // 尝试从记录中获取群组昵称
-      const guildRecord = records.find(r => r.guildId === options.guild && r.guildName)
-      if (guildRecord?.guildName) {
-        guildName = guildRecord.guildName
-      }
-    }
-
-    const conditions = Object.entries({
-      user: ['用户', options.user ? (userName || options.user) : null],
-      guild: ['群组', options.guild ? (guildName || options.guild) : null],
-      platform: ['平台', options.platform],
-      command: ['命令', options.command]
+  /**
+   * 检查目标是否匹配规则列表中的任何规则
+   * @param {string[]} list - 规则列表
+   * @param {{platform: string, guildId: string, userId: string, command?: string}} target - 目标对象
+   * @returns {boolean} 是否匹配
+   */
+  matchRuleList(list: string[], target: { platform: string, guildId: string, userId: string, command?: string }): boolean {
+    return list.some(rule => {
+      if (target.command && rule === target.command) return true
+      const [rulePlatform = '', ruleGuild = '', ruleUser = ''] = rule.split(':')
+      return (rulePlatform && target.platform === rulePlatform) ||
+             (ruleGuild && target.guildId === ruleGuild) ||
+             (ruleUser && target.userId === ruleUser) ||
+             (rule.endsWith(':') && target.platform && rule.startsWith(target.platform + ':'))
     })
-      .filter(([_, [__, value]]) => value)
-      .map(([_, [label, value]]) => `${label}${value}`)
-
-    const title = conditions.length
-      ? `${conditions.join('、')}的${typeMap[type]}统计 ——`
-      : `全局${typeMap[type]}统计 ——`
-
-    return { records, title }
   },
 
   /**
-   * 格式化并返回指定类型的列表
-   * @param {StatRecord[]} records - 统计记录数组
-   * @param {keyof StatRecord} key - 要获取的键名
-   * @param {string} title - 列表标题
-   * @returns {string|null} 格式化后的列表字符串，无内容则返回null
+   * 构建条件描述
+   * @param {Object} options - 包含可能的条件的对象
+   * @returns {string[]} 条件描述数组
    */
-  formatList: (records: StatRecord[], key: keyof StatRecord, title: string): string | null => {
-    const uniqueKeys = utils.getUniqueKeys(records, key)
-
-    if (key === 'command') {
-      const commands = uniqueKeys.filter(cmd => cmd !== '_message')
-      return commands.length ? `${title} ——\n${commands.join(', ')}` : null
-    } else if (key === 'userId' || key === 'guildId') {
-      const items = uniqueKeys.map(id => {
-        const record = records.find(r => r[key] === id)
-        const name = key === 'userId' ? record?.userName : record?.guildName
-        return name ? `${name} (${id})` : id
-      })
-      return items.length ? `${title} ——\n${items.join(', ')}` : null
-    }
-
-    return uniqueKeys.length ? `${title} ——\n${uniqueKeys.join(', ')}` : null
-  },
-
-  /**
-   * 处理列表查看命令
-   * @param {Context} ctx - Koishi上下文
-   * @param {Object} options - 选项
-   * @param {boolean} [options.user] - 是否查看用户列表
-   * @param {boolean} [options.guild] - 是否查看群组列表
-   * @returns {Promise<string>} 格式化的列表内容
-   */
-  async handleListCommand(ctx: Context, options: {
-    user?: boolean, guild?: boolean
-  }): Promise<string> {
-    const records = await ctx.database.get('analytics.stat', {})
-    if (!records?.length) return '未找到记录'
-
-    const hasParams = options.user || options.guild
-    const parts: (string | null)[] = []
-
-    if (!hasParams) {
-      parts.push(this.formatList(records, 'platform', '平台列表'))
-      parts.push(this.formatList(records, 'command', '命令列表'))
-    }
-    if (options.user) parts.push(this.formatList(records, 'userId', '用户列表'))
-    if (options.guild) parts.push(this.formatList(records, 'guildId', '群组列表'))
-
-    return parts.filter(Boolean).join('\n')
-  },
-
-  /**
-   * 处理清除统计数据命令
-   * @param {Context} ctx - Koishi上下文
-   * @param {Object} options - 清除选项
-   * @param {string} [options.user] - 指定用户
-   * @param {string} [options.platform] - 指定平台
-   * @param {string} [options.guild] - 指定群组
-   * @param {string} [options.command] - 指定命令
-   * @returns {Promise<string>} 清除结果消息
-   */
-  async handleClearCommand(ctx: Context, options: {
-    user?: string, platform?: string, guild?: string, command?: string
-  }): Promise<string> {
-    // 转换选项键名以匹配数据库字段名
-    const cleanOptions = {
-      userId: options.user,
-      platform: options.platform,
-      guildId: options.guild,
-      command: options.command
-    }
-
-    // 获取数据库模块引用
-    const db = await import('./database')
-
-    // 执行清除操作
-    const result = await db.database.clearStats(ctx, cleanOptions)
-
-    if (result === -1) return '已删除所有统计记录'
-
-    // 构建条件描述
-    const conditions = Object.entries({
+  buildConditions(options: {
+    user?: string, guild?: string, platform?: string, command?: string
+  }): string[] {
+    return Object.entries({
       user: ['用户', options.user],
       guild: ['群组', options.guild],
       platform: ['平台', options.platform],
@@ -483,9 +218,147 @@ export const utils = {
     })
       .filter(([_, [__, value]]) => value)
       .map(([_, [label, value]]) => `${label}${value}`)
+  },
 
-    return conditions.length
-      ? `已删除${conditions.join('、')}的统计记录`
-      : `已删除所有统计记录`
+  /**
+   * 标准化统计记录
+   * @param {any} record 待处理的记录
+   * @param {Object} options 选项
+   * @returns {any} 标准化后的记录
+   */
+  normalizeRecord(record: any, options: { sanitizeNames?: boolean } = {}): any {
+    const result = { ...record };
+
+    if (options.sanitizeNames) {
+      if (result.userName) {
+        result.userName = this.sanitizeString(result.userName);
+      }
+      if (result.guildName) {
+        result.guildName = this.sanitizeString(result.guildName);
+      }
+    }
+    // 确保时间字段是Date对象
+    if (result.lastTime && !(result.lastTime instanceof Date)) {
+      result.lastTime = new Date(result.lastTime);
+    }
+    // 确保计数是数字
+    if (result.count && typeof result.count !== 'number') {
+      result.count = parseInt(String(result.count)) || 1;
+    }
+
+    return result;
+  },
+
+  /**
+   * 生成统计数据映射表
+   * @param {Array<any>} records 记录数组
+   * @param {string} keyField 用作键的字段名
+   * @param {function} [keyFormatter] 键格式化函数
+   * @returns {Map<string, {count: number, lastTime: Date, displayName?: string}>}
+   */
+  generateStatsMap(records: any[], keyField: string, keyFormatter?: (key: string) => string): Map<string, any> {
+    const dataMap = new Map<string, {count: number, lastTime: Date, displayName?: string}>();
+
+    records.forEach(record => {
+      const recordKey = record[keyField];
+      if (!recordKey) return;
+
+      const formattedKey = keyFormatter ? keyFormatter(recordKey) : recordKey;
+      let displayName = formattedKey;
+
+      if (keyField === 'userId' && record.userName) {
+        displayName = record.userName;
+      } else if (keyField === 'guildId' && record.guildName) {
+        displayName = record.guildName;
+      }
+
+      const current = dataMap.get(formattedKey) || {
+        count: 0,
+        lastTime: record.lastTime,
+        displayName
+      };
+
+      current.count += record.count;
+      if (record.lastTime > current.lastTime) {
+        current.lastTime = record.lastTime;
+      }
+
+      dataMap.set(formattedKey, current);
+    });
+
+    return dataMap;
+  },
+
+  /**
+   * 过滤统计记录
+   * @param {Array<any>} records 记录数组
+   * @param {Object} options 过滤选项
+   * @returns {Array<any>} 过滤后的记录
+   */
+  filterStatRecords(records: any[], options: {
+    keyField?: string,
+    displayWhitelist?: string[],
+    displayBlacklist?: string[],
+    disableCommandMerge?: boolean
+  } = {}): any[] {
+    const {
+      keyField = 'command',
+      displayWhitelist = [],
+      displayBlacklist = [],
+      disableCommandMerge = false
+    } = options;
+
+    let filteredRecords = records;
+    // 按命令类型过滤
+    if (keyField === 'command' && !disableCommandMerge) {
+      filteredRecords = records.filter(r => r.command !== '_message');
+    }
+    // 应用白名单和黑名单
+    if (displayWhitelist.length || displayBlacklist.length) {
+      filteredRecords = filteredRecords.filter(record => {
+        const key = record[keyField];
+        if (!key) return false;
+        // 白名单优先
+        if (displayWhitelist.length) {
+          return displayWhitelist.some(pattern => key.includes(pattern));
+        }
+        // 黑名单过滤
+        return !displayBlacklist.some(pattern => key.includes(pattern));
+      });
+    }
+
+    return filteredRecords;
+  },
+
+  /**
+   * 通用数据排序函数
+   * @param {Array<any>} data 数据数组
+   * @param {string} sortBy 排序字段
+   * @param {string} keyField 键字段名
+   * @returns {Array<any>} 排序后的数组
+   */
+  sortData(data: any[], sortBy: string = 'count', keyField: string = 'key'): any[] {
+    return [...data].sort((a, b) =>
+      sortBy === 'count' ? b.count - a.count : a[keyField].localeCompare(b[keyField])
+    );
+  },
+
+  /**
+   * 处理名称显示
+   * @param {string} name 原始名称
+   * @param {string} id ID标识
+   * @param {boolean} truncateId 是否截断ID
+   * @returns {string} 格式化后的名称
+   */
+  formatDisplayName(name: string, id: string, truncateId: boolean = false): string {
+    if (!name) return id || '';
+    const cleanName = this.sanitizeString(name);
+    if (!cleanName || /^[\s*□]+$/.test(cleanName)) return id || '';
+
+    if (truncateId || cleanName === id || cleanName.includes(id)) {
+      return cleanName;
+    }
+
+    return `${cleanName} (${id})`;
   }
 }
