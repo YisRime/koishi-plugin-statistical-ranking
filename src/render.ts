@@ -5,6 +5,22 @@ import { StatRecord } from './index'
 import { utils } from './utils'
 
 /**
+ * 格式化日期时间为年月日和24小时制
+ * @param {Date} date - 日期对象
+ * @returns {string} 格式化后的日期时间字符串
+ */
+function formatDateTime(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+/**
  * 将HTML内容转换为图片
  * @param {string} html - 要渲染的HTML内容
  * @param {Context} ctx - Koishi上下文
@@ -15,10 +31,9 @@ import { utils } from './utils'
 export async function htmlToImage(html: string, ctx: Context, options: { width?: number } = {}): Promise<Buffer> {
   try {
     const page = await ctx.puppeteer.page()
-    // 设置初始视口大小，默认使用720px
-    const viewportWidth = options.width || 720
+    const initialViewportWidth = options.width || 720
     await page.setViewport({
-      width: viewportWidth,
+      width: initialViewportWidth,
       height: 1080,
       deviceScaleFactor: 2.0
     })
@@ -36,19 +51,32 @@ export async function htmlToImage(html: string, ctx: Context, options: { width?:
               font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
               background: white;
             }
+            table {
+              width: 100%;
+              table-layout: auto;
+            }
           </style>
         </head>
         <body>${html}</body>
       </html>
     `, { waitUntil: 'networkidle0' })
-    // 计算实际内容高度
-    const contentHeight = await page.evaluate(() => {
-      return document.body.scrollHeight;
+    // 计算实际内容宽度和高度
+    const dimensions = await page.evaluate(() => {
+      const contentWidth = Math.max(
+        document.body.scrollWidth,
+        document.body.offsetWidth,
+        document.documentElement.clientWidth,
+        document.documentElement.scrollWidth,
+        document.documentElement.offsetWidth
+      );
+      const contentHeight = document.body.scrollHeight;
+      return { width: contentWidth, height: contentHeight };
     });
-    // 调整视口高度
+
+    // 调整视口大小以完全适应内容
     await page.setViewport({
-      width: viewportWidth,
-      height: contentHeight,
+      width: dimensions.width,
+      height: dimensions.height,
       deviceScaleFactor: 2.0
     });
     // 等待所有图片加载完成
@@ -92,11 +120,9 @@ export function recordsToChartData(records: StatRecord[], key: keyof StatRecord,
     displayBlacklist = [],
     displayWhitelist = []
   } = options;
-
   // 处理数据聚合
   const keyFormatter = (key === 'command' && !disableCommandMerge)
     ? (k: string) => k?.split('.')[0] || '' : undefined;
-
   const dataMap = new Map<string, {count: number, lastTime: Date, displayName?: string}>();
   // 过滤记录
   const filteredRecords = (key === 'command' && !disableCommandMerge)
@@ -164,33 +190,27 @@ export async function generateStatImage(
   // 设置颜色主题
   const headerColor = key === 'userId' ? '#ff6b81' : (key === 'guildId' ? '#5dd5a8' : '#4d7cfe');
   // 当前时间
-  const currentTime = new Date().toLocaleString();
+  const currentTime = formatDateTime(new Date());
   // 计算总次数和总项目数
   const totalItems = chartData.length;
   const totalCount = chartData.reduce((sum, item) => sum + item.value, 0);
-  // 生成统计摘要
-  const statsSummary = `
-    <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
-      <div style="display:flex; gap:10px;">
-        <div style="background-color:#f8f9fa; border-radius:4px; padding:4px 8px; font-size:13px;">
-          <span style="color:#666;">总项目数：</span>
-          <span style="font-weight:bold; color:#333;">${totalItems}</span>
-        </div>
-        <div style="background-color:#f8f9fa; border-radius:4px; padding:4px 8px; font-size:13px;">
-          <span style="color:#666;">总${key === 'command' ? '次数' : '条数'}：</span>
-          <span style="font-weight:bold; color:#333;">${totalCount}</span>
-        </div>
-      </div>
-    </div>
-  `;
   // 生成HTML内容并渲染
   const html = `
-    <div style="padding:15px; max-width:690px; margin:0 auto; box-shadow:0 2px 10px rgba(0,0,0,0.1); border-radius:10px; overflow:hidden;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; padding-bottom:8px; border-bottom:1px solid #eee;">
-        <h2 style="margin:0; color:#333; font-size:18px;">${title}</h2>
-        <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:4px 8px; border-radius:4px;">${currentTime}</div>
+    <div style="padding:15px; box-shadow:0 2px 10px rgba(0,0,0,0.1); border-radius:10px; overflow:hidden;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; padding-bottom:8px; border-bottom:1px solid #eee; flex-wrap:nowrap;">
+        <div style="display:flex; gap:6px; flex-shrink:0; margin-right:10px;">
+          <div style="background-color:#f8f9fa; border-radius:4px; padding:4px 8px; font-size:13px; white-space:nowrap;">
+            <span style="color:#666;">总条目: </span>
+            <span style="font-weight:bold; color:#333;">${totalItems}</span>
+          </div>
+          <div style="background-color:#f8f9fa; border-radius:4px; padding:4px 8px; font-size:13px; white-space:nowrap;">
+            <span style="color:#666;">总${key === 'command' ? '次数' : '条数'}: </span>
+            <span style="font-weight:bold; color:#333;">${totalCount}</span>
+          </div>
+        </div>
+        <h2 style="margin:0; color:#333; font-size:18px; text-align:center; flex-grow:1;">${title}</h2>
+        <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:4px 8px; border-radius:4px; white-space:nowrap; flex-shrink:0; margin-left:10px;">${currentTime}</div>
       </div>
-      ${statsSummary}
       ${generateTableHTML(chartData, key, headerColor)}
     </div>
   `;
@@ -225,32 +245,52 @@ export async function generateCombinedStatImage(
     // 计算总次数和总项目数
     const totalItems = chartData.length;
     const totalCount = chartData.reduce((sum, item) => sum + item.value, 0);
-    // 生成统计摘要
-    const datasetSummary = `
-      <div style="display:flex; justify-content:space-between; margin-bottom:8px; margin-top:4px;">
-        <div style="display:flex; gap:10px;">
-          <div style="background-color:#f8f9fa; border-radius:4px; padding:3px 6px; font-size:12px;">
-            <span style="color:#666;">项目数：</span>
-            <span style="font-weight:bold; color:#333;">${totalItems}</span>
-          </div>
-          <div style="background-color:#f8f9fa; border-radius:4px; padding:3px 6px; font-size:12px;">
-            <span style="color:#666;">总${dataset.key === 'command' ? '次数' : '条数'}：</span>
-            <span style="font-weight:bold; color:#333;">${totalCount}</span>
-          </div>
-        </div>
-      </div>
-    `;
 
     return `
       <div style="margin-bottom:20px;">
-        <h3 style="margin:12px 0; color:#333; font-size:16px;">${dataset.title}</h3>
-        ${datasetSummary}
+        <div style="display:flex; align-items:center; margin:8px 0; flex-wrap:nowrap;">
+          <div style="display:flex; gap:6px; flex-shrink:0; margin-right:10px;">
+            <div style="background-color:#f8f9fa; border-radius:4px; padding:3px 6px; font-size:12px; white-space:nowrap;">
+              <span style="color:#666;">条目: </span>
+              <span style="font-weight:bold; color:#333;">${totalItems}</span>
+            </div>
+            <div style="background-color:#f8f9fa; border-radius:4px; padding:3px 6px; font-size:12px; white-space:nowrap;">
+              <span style="color:#666;">${dataset.key === 'command' ? '次数' : '条数'}: </span>
+              <span style="font-weight:bold; color:#333;">${totalCount}</span>
+            </div>
+          </div>
+          <h3 style="margin:0; color:#333; font-size:16px; text-align:center; flex-grow:1;">${dataset.title}</h3>
+          <div style="flex-shrink:0; margin-left:10px; width:1px;"></div>
+        </div>
         ${generateTableHTML(chartData, dataset.key, headerColor)}
       </div>
     `;
   }).join('');
-  // 生成汇总卡片
-  const summaryHTML = `
+
+  // 当前时间
+  const currentTime = formatDateTime(new Date());
+  // 组合所有内容
+  const html = `
+    <div style="padding:20px; box-shadow:0 2px 12px rgba(0,0,0,0.12); border-radius:10px; overflow:hidden;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; padding-bottom:12px; border-bottom:1px solid #eee; flex-wrap:nowrap;">
+        <div style="min-width:10px; flex-shrink:0;"></div>
+        <h2 style="margin:0; color:#333; font-size:18px; text-align:center; flex-grow:1;">${mainTitle}</h2>
+        <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:4px 8px; border-radius:4px; white-space:nowrap; flex-shrink:0;">${currentTime}</div>
+      </div>
+      ${generateSummaryHTML(summaryData)}
+      ${tablesHTML}
+    </div>
+  `;
+  return await htmlToImage(html, ctx);
+}
+
+/**
+ * 生成汇总卡片HTML
+ * @param {Array<{label: string, value: string|number}>} summaryData - 汇总数据
+ * @returns {string} 汇总卡片HTML
+ */
+function generateSummaryHTML(summaryData: Array<{label: string, value: string|number}>): string {
+  return `
     <div style="text-align:center; margin-bottom:25px;">
       ${summaryData.map(item => `
         <div style="display:inline-block; background-color:#f8f9fa; border-radius:8px; padding:10px 15px; margin:6px; min-width:120px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
@@ -260,20 +300,6 @@ export async function generateCombinedStatImage(
       `).join('')}
     </div>
   `;
-  // 当前时间
-  const currentTime = new Date().toLocaleString();
-  // 组合所有内容
-  const html = `
-    <div style="padding:20px; max-width:680px; margin:0 auto; box-shadow:0 2px 12px rgba(0,0,0,0.12); border-radius:10px; overflow:hidden;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; padding-bottom:12px; border-bottom:1px solid #eee;">
-        <h2 style="margin:0; color:#333; font-size:18px;">${mainTitle}</h2>
-        <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:4px 8px; border-radius:4px;">${currentTime}</div>
-      </div>
-      ${summaryHTML}
-      ${tablesHTML}
-    </div>
-  `;
-  return await htmlToImage(html, ctx);
 }
 
 /**
@@ -296,9 +322,9 @@ function generateTableHTML(data: Array<{name: string, value: number, time: strin
       return `
         <tr>
           <td style="padding:6px 8px; border-bottom:1px solid #eee;">${item.name}</td>
-          <td style="padding:6px 8px; border-bottom:1px solid #eee; text-align:right; width:60px;">${valueText}</td>
-          <td style="padding:6px 8px; border-bottom:1px solid #eee; text-align:right; width:70px; font-family:monospace;">${percentText}</td>
-          <td style="padding:6px 8px; border-bottom:1px solid #eee; text-align:right; width:90px; color:#666;">${item.time}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">${valueText}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap; font-family:monospace;">${percentText}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap; color:#666;">${item.time}</td>
         </tr>
       `;
     }).join('');
@@ -309,9 +335,9 @@ function generateTableHTML(data: Array<{name: string, value: number, time: strin
         <thead>
           <tr style="background-color:${headerColor};">
             <th style="padding:8px; text-align:left; color:white; font-weight:500;">名称</th>
-            <th style="padding:8px; text-align:right; width:60px; color:white; font-weight:500;">数值</th>
-            <th style="padding:8px; text-align:right; width:70px; color:white; font-weight:500;">占比</th>
-            <th style="padding:8px; text-align:right; width:90px; color:white; font-weight:500;">最后活动</th>
+            <th style="padding:8px; text-align:right; color:white; font-weight:500; white-space:nowrap;">数量</th>
+            <th style="padding:8px; text-align:right; color:white; font-weight:500; white-space:nowrap;">比例</th>
+            <th style="padding:8px; text-align:right; color:white; font-weight:500; white-space:nowrap;">最近活动</th>
           </tr>
         </thead>
         <tbody>
