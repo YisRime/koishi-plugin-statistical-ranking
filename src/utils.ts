@@ -206,8 +206,12 @@ export const utils = {
     let entries = stats.sortedEntries(sortBy);
     if (displayWhitelist.length || displayBlacklist.length) {
       entries = entries.filter(([key]) => {
-        if (displayWhitelist.length) return displayWhitelist.some(p => key.includes(p));
-        return !displayBlacklist.some(p => key.includes(p));
+        // 白名单优先：如果白名单不为空，必须匹配白名单中的任何一项
+        if (displayWhitelist.length) {
+          return displayWhitelist.some(pattern => key.includes(pattern));
+        }
+        // 黑名单：如果未匹配白名单，则不能匹配黑名单中的任何一项
+        return !displayBlacklist.some(pattern => key.includes(pattern));
       });
     }
 

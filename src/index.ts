@@ -19,7 +19,6 @@ export const inject = {
  * @interface Config
  * @property {boolean} [enableDataTransfer] - 是否启用数据导入导出功能
  * @property {boolean} [enableClear] - 是否启用数据清除功能
- * @property {boolean} [enableDisplayFilter] - 是否启用显示过滤功能
  * @property {string[]} [displayBlacklist] - 显示过滤黑名单
  * @property {string[]} [displayWhitelist] - 显示过滤白名单
  * @property {boolean} [defaultImageMode] - 是否默认使用图片模式展示
@@ -27,7 +26,6 @@ export const inject = {
 export interface Config {
   enableDataTransfer?: boolean
   enableClear?: boolean
-  enableDisplayFilter?: boolean
   displayBlacklist?: string[]
   displayWhitelist?: string[]
   defaultImageMode?: boolean
@@ -40,28 +38,17 @@ export const Config = Schema.intersect([
   Schema.object({
     enableClear: Schema.boolean().default(true).description('启用统计数据清除'),
     enableDataTransfer: Schema.boolean().default(true).description('启用统计数据导入导出'),
-    enableDisplayFilter: Schema.boolean().default(false).description('启用显示过滤'),
     defaultImageMode: Schema.boolean().default(false).description('默认使用图片模式展示'),
-  }).description('基础配置'),
-  Schema.union([
-    Schema.object({
-      enableDisplayFilter: Schema.const(true).required(),
-      displayWhitelist: Schema.array(Schema.string())
-        .description('白名单，仅展示这些统计记录（先于黑名单生效）')
-        .default([]),
-      displayBlacklist: Schema.array(Schema.string())
-        .description('黑名单，将不会默认展示以下命令/用户/群组/平台')
-        .default([
-          'onebot:12345:67890',
-          'qq::12345',
-          'sandbox::',
-          '.help',
-        ]),
-    }).description('显示过滤配置'),
-    Schema.object({
-      enableDisplayFilter: Schema.const(false).required(),
-    }),
-  ])
+    displayWhitelist: Schema.array(Schema.string())
+      .description('显示白名单：仅展示以下记录（优先级高于黑名单）')
+      .default([]),
+    displayBlacklist: Schema.array(Schema.string())
+      .description('显示黑名单：不默认显示以下记录(platform:guildId:userId/.command)')
+      .default([
+        'qq:1234:5678',
+        '.message',
+      ]),
+    }).description('统计配置'),
 ])
 
 /**
@@ -149,14 +136,11 @@ export async function apply(ctx: Context, config: Config = {}) {
   config = {
     enableClear: true,
     enableDataTransfer: true,
-    enableDisplayFilter: false,
     defaultImageMode: false,
+    displayWhitelist: [],
+    displayBlacklist: [],
     ...config
   }
-
-  // 确保只有在启用过滤时才使用过滤列表
-  const displayWhitelist = config.enableDisplayFilter ? (config.displayWhitelist || []) : []
-  const displayBlacklist = config.enableDisplayFilter ? (config.displayBlacklist || []) : []
 
   database.initialize(ctx)
 
@@ -250,47 +234,55 @@ export async function apply(ctx: Context, config: Config = {}) {
       // 如果使用图片模式并且puppeteer可用
       if (useImageMode && ctx.puppeteer) {
         try {
-          // 处理命令统计图片
+          // 准备数据集
+          const datasets = [];
+          let commandCount = 0;
+
+          // 加入命令统计数据
           if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
-            const imageBuffer = await render.generateStatImage(
-              ctx,
-              commandResult.records,
-              'command',
-              `${userName}的命令统计`,
-              { limit: 15, truncateId: false }
-            )
-            await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+            commandCount = commandResult.records.length;
+            datasets.push({
+              records: commandResult.records,
+              title: '命令使用统计',
+              key: 'command',
+              options: { limit: 15, truncateId: false }
+            });
           }
 
-          // 处理群组统计图片
+          // 加入群组统计数据
           if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
-            const imageBuffer = await render.generateStatImage(
-              ctx,
-              messageResult.records,
-              'guildId',
-              `${userName}的群组活跃度`,
-              { limit: 15, truncateId: true }
-            )
-            await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+            datasets.push({
+              records: messageResult.records,
+              title: '群组活跃度统计',
+              key: 'guildId',
+              options: { limit: 15, truncateId: true }
+            });
           }
 
-          // 生成总体统计卡片
-          const cardData = [
+          // 准备汇总数据
+          const summaryData = [
             { label: '消息总数', value: totalMessages },
             { label: '活跃群组', value: typeof messageResult !== 'string' ? messageResult.records.length : 0 },
-            { label: '使用命令', value: typeof commandResult !== 'string' ? commandResult.records.length : 0 },
-          ]
+            { label: '使用命令', value: commandCount },
+          ];
 
-          const cardHtml = render.generateStatCardHtml(`${userName}的统计数据`, cardData)
-          const cardBuffer = await render.htmlToImage(cardHtml, ctx, { width: 400, height: 250 })
-          await session.send(h.image('data:image/png;base64,' + cardBuffer.toString('base64')))
+          // 生成综合统计图
+          const imageBuffer = await render.generateCombinedStatImage(
+            ctx,
+            datasets,
+            `${userName}的统计数据`,
+            summaryData
+          );
 
-          return
+          await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')));
+          return;
         } catch (e) {
-          ctx.logger.error('生成统计图片失败:', e)
+          ctx.logger.error('生成统计图片失败:', e);
+          // 出错时降级为文本模式
         }
       }
 
+      // 文本模式输出
       return title + '\n' + items.join('\n');
     })
 
@@ -329,8 +321,8 @@ export async function apply(ctx: Context, config: Config = {}) {
             {
               sortBy: 'count',
               disableCommandMerge: showAll,
-              displayBlacklist: showAll ? [] : displayBlacklist,
-              displayWhitelist: showAll ? [] : displayWhitelist,
+              displayBlacklist: showAll ? [] : config.displayBlacklist,
+              displayWhitelist: showAll ? [] : config.displayWhitelist,
               limit: 15,
             }
           )
@@ -344,8 +336,8 @@ export async function apply(ctx: Context, config: Config = {}) {
       const processed = await utils.processStatRecords(result.records, 'command', {
         sortBy: 'count',
         disableCommandMerge: showAll,
-        displayBlacklist: showAll ? [] : displayBlacklist,
-        displayWhitelist: showAll ? [] : displayWhitelist,
+        displayBlacklist: showAll ? [] : config.displayBlacklist,
+        displayWhitelist: showAll ? [] : config.displayWhitelist,
         page: page,
         pageSize: 15,
         title: result.title,
@@ -389,8 +381,8 @@ export async function apply(ctx: Context, config: Config = {}) {
             {
               sortBy: 'count',
               truncateId: true,
-              displayBlacklist: showAll ? [] : displayBlacklist,
-              displayWhitelist: showAll ? [] : displayWhitelist,
+              displayBlacklist: showAll ? [] : config.displayBlacklist,
+              displayWhitelist: showAll ? [] : config.displayWhitelist,
               limit: 15,
             }
           )
@@ -404,8 +396,8 @@ export async function apply(ctx: Context, config: Config = {}) {
       const processed = await utils.processStatRecords(result.records, 'userId', {
         sortBy: 'count',
         truncateId: true,
-        displayBlacklist: showAll ? [] : displayBlacklist,
-        displayWhitelist: showAll ? [] : displayWhitelist,
+        displayBlacklist: showAll ? [] : config.displayBlacklist,
+        displayWhitelist: showAll ? [] : config.displayWhitelist,
         page: page,
         pageSize: 15,
         title: result.title,
@@ -450,8 +442,8 @@ export async function apply(ctx: Context, config: Config = {}) {
             {
               sortBy: 'count',
               truncateId: true,
-              displayBlacklist: showAll ? [] : displayBlacklist,
-              displayWhitelist: showAll ? [] : displayWhitelist,
+              displayBlacklist: showAll ? [] : config.displayBlacklist,
+              displayWhitelist: showAll ? [] : config.displayWhitelist,
               limit: 15,
             }
           )
@@ -465,8 +457,8 @@ export async function apply(ctx: Context, config: Config = {}) {
       const processed = await utils.processStatRecords(result.records, 'guildId', {
         sortBy: 'count',
         truncateId: true,
-        displayBlacklist: showAll ? [] : displayBlacklist,
-        displayWhitelist: showAll ? [] : displayWhitelist,
+        displayBlacklist: showAll ? [] : config.displayBlacklist,
+        displayWhitelist: showAll ? [] : config.displayWhitelist,
         page: page,
         pageSize: 15,
         title: result.title,
