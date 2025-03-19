@@ -240,7 +240,7 @@ export async function apply(ctx: Context, config: Config = {}) {
             commandCount = commandResult.records.length;
             datasets.push({
               records: commandResult.records,
-              title: '命令使用统计',
+              title: '命令统计',
               key: 'command',
               options: { limit: 15, truncateId: false }
             });
@@ -249,23 +249,17 @@ export async function apply(ctx: Context, config: Config = {}) {
           if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
             datasets.push({
               records: messageResult.records,
-              title: '群组活跃度统计',
+              title: '发言统计',
               key: 'guildId',
               options: { limit: 15, truncateId: true }
             });
           }
-          // 准备汇总数据
-          const summaryData = [
-            { label: '消息总数', value: totalMessages },
-            { label: '活跃群组', value: typeof messageResult !== 'string' ? messageResult.records.length : 0 },
-            { label: '使用命令', value: commandCount },
-          ];
+
           // 生成综合统计图
           const imageBuffer = await render.generateCombinedStatImage(
             ctx,
             datasets,
-            `${userName}的统计数据`,
-            summaryData
+            `${userName}的统计`
           );
           await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')));
           return;

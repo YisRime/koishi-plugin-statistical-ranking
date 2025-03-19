@@ -200,7 +200,7 @@ export async function generateStatImage(
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; padding-bottom:8px; border-bottom:1px solid #eee; flex-wrap:nowrap;">
         <div style="display:flex; gap:6px; flex-shrink:0; margin-right:10px;">
           <div style="background-color:#f8f9fa; border-radius:4px; padding:4px 8px; font-size:13px; white-space:nowrap;">
-            <span style="color:#666;">总条目: </span>
+            <span style="color:#666;">总项目: </span>
             <span style="font-weight:bold; color:#333;">${totalItems}</span>
           </div>
           <div style="background-color:#f8f9fa; border-radius:4px; padding:4px 8px; font-size:13px; white-space:nowrap;">
@@ -228,8 +228,7 @@ export async function generateStatImage(
 export async function generateCombinedStatImage(
   ctx: Context,
   datasets: Array<{records: StatRecord[], title: string, key: keyof StatRecord, options?: StatProcessOptions}>,
-  mainTitle: string,
-  summaryData: {label: string, value: string|number}[]
+  mainTitle: string
 ): Promise<Buffer> {
   // 处理数据集
   const tablesHTML = datasets.map(dataset => {
@@ -251,7 +250,7 @@ export async function generateCombinedStatImage(
         <div style="display:flex; align-items:center; margin:8px 0; flex-wrap:nowrap;">
           <div style="display:flex; gap:6px; flex-shrink:0; margin-right:10px;">
             <div style="background-color:#f8f9fa; border-radius:4px; padding:3px 6px; font-size:12px; white-space:nowrap;">
-              <span style="color:#666;">条目: </span>
+              <span style="color:#666;">总项目: </span>
               <span style="font-weight:bold; color:#333;">${totalItems}</span>
             </div>
             <div style="background-color:#f8f9fa; border-radius:4px; padding:3px 6px; font-size:12px; white-space:nowrap;">
@@ -277,29 +276,10 @@ export async function generateCombinedStatImage(
         <h2 style="margin:0; color:#333; font-size:18px; text-align:center; flex-grow:1;">${mainTitle}</h2>
         <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:4px 8px; border-radius:4px; white-space:nowrap; flex-shrink:0;">${currentTime}</div>
       </div>
-      ${generateSummaryHTML(summaryData)}
       ${tablesHTML}
     </div>
   `;
   return await htmlToImage(html, ctx);
-}
-
-/**
- * 生成汇总卡片HTML
- * @param {Array<{label: string, value: string|number}>} summaryData - 汇总数据
- * @returns {string} 汇总卡片HTML
- */
-function generateSummaryHTML(summaryData: Array<{label: string, value: string|number}>): string {
-  return `
-    <div style="text-align:center; margin-bottom:25px;">
-      ${summaryData.map(item => `
-        <div style="display:inline-block; background-color:#f8f9fa; border-radius:8px; padding:10px 15px; margin:6px; min-width:120px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
-          <div style="font-size:13px; color:#666; margin-bottom:4px;">${item.label}</div>
-          <div style="font-size:18px; font-weight:bold; color:#333;">${item.value}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
 }
 
 /**
@@ -336,8 +316,8 @@ function generateTableHTML(data: Array<{name: string, value: number, time: strin
           <tr style="background-color:${headerColor};">
             <th style="padding:8px; text-align:left; color:white; font-weight:500;">名称</th>
             <th style="padding:8px; text-align:right; color:white; font-weight:500; white-space:nowrap;">数量</th>
-            <th style="padding:8px; text-align:right; color:white; font-weight:500; white-space:nowrap;">比例</th>
-            <th style="padding:8px; text-align:right; color:white; font-weight:500; white-space:nowrap;">最近活动</th>
+            <th style="padding:8px; text-align:right; color:white; font-weight:500; white-space:nowrap;">占比</th>
+            <th style="padding:8px; text-align:right; color:white; font-weight:500; white-space:nowrap;">最后统计</th>
           </tr>
         </thead>
         <tbody>
