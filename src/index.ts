@@ -145,9 +145,13 @@ export async function apply(ctx: Context, config: Config = {}) {
   database.initialize(ctx)
 
   // 创建渲染器实例
-  let renderer: Renderer
+  let renderer: Renderer | undefined
   if (ctx.puppeteer) {
-    renderer = new Renderer(ctx)
+    try {
+      renderer = new Renderer(ctx)
+    } catch (e) {
+      ctx.logger.error('初始化渲染器失败:', e)
+    }
   }
 
   /**
@@ -239,7 +243,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       // 确定模式
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片模式
-      if (useImageMode && ctx.puppeteer) {
+      if (useImageMode && ctx.puppeteer && renderer) {
         try {
           // 准备数据集
           const datasets = [];
@@ -310,7 +314,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
-      if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
+      if (useImageMode && ctx.puppeteer && renderer) {
         try {
           const imageBuffer = await renderer.generateStatImage(
             result.records,
@@ -370,7 +374,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
-      if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
+      if (useImageMode && ctx.puppeteer && renderer) {
         try {
           const imageBuffer = await renderer.generateStatImage(
             result.records,
@@ -431,7 +435,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
-      if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
+      if (useImageMode && ctx.puppeteer && renderer) {
         try {
           const imageBuffer = await renderer.generateStatImage(
             result.records,
