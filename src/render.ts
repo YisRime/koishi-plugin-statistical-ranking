@@ -14,12 +14,8 @@ export class Renderer {
   /**
    * 创建渲染器实例
    * @param {Context} ctx - Koishi上下文
-   * @throws {Error} 如果 puppeteer 不可用则抛出错误
    */
   constructor(ctx: Context) {
-    if (!ctx.puppeteer) {
-      throw new Error('puppeteer 插件不可用')
-    }
     this.ctx = ctx
   }
 
@@ -31,10 +27,6 @@ export class Renderer {
    * @returns {Promise<Buffer>} 图片Buffer数据
    */
   async htmlToImage(html: string, options: { width?: number } = {}): Promise<Buffer> {
-    if (!this.ctx.puppeteer) {
-      throw new Error('puppeteer 插件不可用')
-    }
-
     let page: any = null
     try {
       page = await this.ctx.puppeteer.page()
@@ -44,11 +36,9 @@ export class Renderer {
         height: 1080,
         deviceScaleFactor: 2.0
       })
-
       // 设置超时
       await page.setDefaultNavigationTimeout(30000)
       await page.setDefaultTimeout(30000)
-
       // 设置HTML内容
       await page.setContent(`
         <!DOCTYPE html>
@@ -72,7 +62,6 @@ export class Renderer {
           <body>${html}</body>
         </html>
       `, { waitUntil: 'networkidle0' })
-
       // 计算实际内容宽度和高度
       const dimensions = await page.evaluate(() => {
         const contentWidth = Math.max(
@@ -85,14 +74,12 @@ export class Renderer {
         const contentHeight = document.body.scrollHeight;
         return { width: contentWidth, height: contentHeight };
       });
-
       // 调整视口大小以完全适应内容
       await page.setViewport({
         width: dimensions.width,
         height: dimensions.height,
         deviceScaleFactor: 2.0
       });
-
       // 等待所有图片加载完成
       await page.evaluate(() => {
         const imgPromises = Array.from(document.querySelectorAll('img'))
@@ -104,7 +91,6 @@ export class Renderer {
           );
         return Promise.all(imgPromises);
       });
-
       // 截取整个页面
       const imageBuffer = await page.screenshot({
         type: 'png',
@@ -115,13 +101,13 @@ export class Renderer {
       return imageBuffer;
     } catch (error) {
       this.ctx.logger.error('图片渲染出错:', error)
-      throw new Error(`图片渲染出错: ${error.message}`)
+      throw new Error(`图片渲染出错: ${error.message || '未知错误'}`)
     } finally {
       if (page) {
         try {
-          await page.close()
+          await page.close().catch(() => {})
         } catch (e) {
-          this.ctx.logger.error('关闭页面失败:', e)
+          this.ctx.logger.warn('关闭页面失败:', e)
         }
       }
     }
