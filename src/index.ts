@@ -173,6 +173,7 @@ export async function apply(ctx: Context, config: Config = {}) {
    */
   const stat = ctx.command('stat [arg:string]', '查看统计信息')
     .option('visual', '-v 切换可视化模式')
+    .option('sort', '-s [method:string] 排序方式', { fallback: 'count' })
     .action(async ({ session, args, options }) => {
       // 获取用户信息和解析参数
       const userInfo = await Utils.getSessionInfo(session)
@@ -199,10 +200,12 @@ export async function apply(ctx: Context, config: Config = {}) {
         totalMessages = messageResult.records.reduce((sum, record) => sum + record.count, 0);
       }
       const allItems = [];
+      // 获取用户选择的排序方式
+      const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       // 处理命令统计
       if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
         const processedCommands = await statProcessor.processStatRecords(commandResult.records, 'command', {
-          sortBy: 'count',
+          sortBy,
           disableCommandMerge: false,
           skipPaging: true,
           title: '命令统计'
@@ -212,7 +215,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       // 处理群组统计
       if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
         const processedGroups = await statProcessor.processStatRecords(messageResult.records, 'guildId', {
-          sortBy: 'count',
+          sortBy,
           truncateId: true,
           skipPaging: true,
           title: '群组统计'
@@ -246,7 +249,11 @@ export async function apply(ctx: Context, config: Config = {}) {
               records: commandResult.records,
               title: '命令统计',
               key: 'command',
-              options: { limit: 15, truncateId: false }
+              options: {
+                limit: 15,
+                truncateId: false,
+                sortBy
+              }
             });
           }
           // 加入群组统计数据
@@ -255,7 +262,11 @@ export async function apply(ctx: Context, config: Config = {}) {
               records: messageResult.records,
               title: '发言统计',
               key: 'guildId',
-              options: { limit: 15, truncateId: true }
+              options: {
+                limit: 15,
+                truncateId: true,
+                sortBy
+              }
             });
           }
           // 生成综合统计图
@@ -282,6 +293,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('visual', '-v 切换可视化模式')
+    .option('sort', '-s [method:string] 排序方式', { fallback: 'count' })
     .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
@@ -294,7 +306,8 @@ export async function apply(ctx: Context, config: Config = {}) {
 
       const result = await statProcessor.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
-
+      // 获取用户选择的排序方式
+      const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
       if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
@@ -304,7 +317,7 @@ export async function apply(ctx: Context, config: Config = {}) {
             'command',
             result.title.replace(' ——', ''),
             {
-              sortBy: 'count',
+              sortBy,
               disableCommandMerge: showAll,
               displayBlacklist: showAll ? [] : config.displayBlacklist,
               displayWhitelist: showAll ? [] : config.displayWhitelist,
@@ -319,7 +332,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       }
 
       const processed = await statProcessor.processStatRecords(result.records, 'command', {
-        sortBy: 'count',
+        sortBy,
         disableCommandMerge: showAll,
         displayBlacklist: showAll ? [] : config.displayBlacklist,
         displayWhitelist: showAll ? [] : config.displayWhitelist,
@@ -340,6 +353,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('visual', '-v 切换可视化模式')
+    .option('sort', '-s [method:string] 排序方式', { fallback: 'count' })
     .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
@@ -352,7 +366,8 @@ export async function apply(ctx: Context, config: Config = {}) {
 
       const result = await statProcessor.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
-
+      // 获取用户选择的排序方式
+      const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
       if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
@@ -362,7 +377,7 @@ export async function apply(ctx: Context, config: Config = {}) {
             'userId',
             result.title.replace(' ——', ''),
             {
-              sortBy: 'count',
+              sortBy,
               truncateId: true,
               displayBlacklist: showAll ? [] : config.displayBlacklist,
               displayWhitelist: showAll ? [] : config.displayWhitelist,
@@ -377,7 +392,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       }
 
       const processed = await statProcessor.processStatRecords(result.records, 'userId', {
-        sortBy: 'count',
+        sortBy,
         truncateId: true,
         displayBlacklist: showAll ? [] : config.displayBlacklist,
         displayWhitelist: showAll ? [] : config.displayWhitelist,
@@ -399,6 +414,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
     .option('visual', '-v 切换可视化模式')
+    .option('sort', '-s [method:string] 排序方式', { fallback: 'count' })
     .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
       let page = 1
@@ -411,7 +427,8 @@ export async function apply(ctx: Context, config: Config = {}) {
 
       const result = await statProcessor.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
-
+      // 获取用户选择的排序方式
+      const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
       if (useImageMode && ctx.puppeteer && typeof result !== 'string') {
@@ -421,7 +438,7 @@ export async function apply(ctx: Context, config: Config = {}) {
             'guildId',
             result.title.replace(' ——', ''),
             {
-              sortBy: 'count',
+              sortBy,
               truncateId: true,
               displayBlacklist: showAll ? [] : config.displayBlacklist,
               displayWhitelist: showAll ? [] : config.displayWhitelist,
@@ -436,7 +453,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       }
 
       const processed = await statProcessor.processStatRecords(result.records, 'guildId', {
-        sortBy: 'count',
+        sortBy,
         truncateId: true,
         displayBlacklist: showAll ? [] : config.displayBlacklist,
         displayWhitelist: showAll ? [] : config.displayWhitelist,
@@ -449,16 +466,12 @@ export async function apply(ctx: Context, config: Config = {}) {
       return processed.title + '\n' + processed.items.join('\n');
     })
 
-  // 注册列表查看子命令
   statProcessor.registerListCommand(ctx, stat)
 
   if (config.enableClear) {
-    // 注册清除命令
     database.registerClearCommand(ctx, stat)
   }
-
   if (config.enableDataTransfer) {
-    // 注册导入导出命令
     io.registerCommands(ctx, stat)
   }
 }

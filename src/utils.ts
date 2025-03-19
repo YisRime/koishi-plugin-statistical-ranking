@@ -333,14 +333,18 @@ export const Utils = {
   /**
    * 通用数据排序函数
    * @param {Array<any>} data 数据数组
-   * @param {string} sortBy 排序字段
+   * @param {string} sortBy 排序字段: 'count' | 'key' | 'time'
    * @param {string} keyField 键字段名
    * @returns {Array<any>} 排序后的数组
    */
   sortData(data: any[], sortBy: string = 'count', keyField: string = 'key'): any[] {
-    return [...data].sort((a, b) =>
-      sortBy === 'count' ? b.count - a.count : a[keyField].localeCompare(b[keyField])
-    );
+    return [...data].sort((a, b) => {
+      if (sortBy === 'count') return b.count - a.count;
+      if (sortBy === 'time' && a.lastTime && b.lastTime) {
+        return new Date(b.lastTime).getTime() - new Date(a.lastTime).getTime();
+      }
+      return a[keyField].localeCompare(b[keyField]);
+    });
   },
 
   /**

@@ -106,9 +106,9 @@ export class Renderer {
    * @param {StatRecord[]} records - 统计记录数组
    * @param {keyof StatRecord} key - 统计键名
    * @param {StatProcessOptions} options - 处理选项
-   * @returns {Array<{name: string, value: number, time: string}>} 转换后的图表数据
+   * @returns {Array<{name: string, value: number, time: string, rawTime: Date}>} 转换后的图表数据
    */
-  recordsToChartData(records: StatRecord[], key: keyof StatRecord, options: StatProcessOptions = {}): Array<{name: string, value: number, time: string}> {
+  recordsToChartData(records: StatRecord[], key: keyof StatRecord, options: StatProcessOptions = {}): Array<{name: string, value: number, time: string, rawTime: Date}> {
     const {
       sortBy = 'count',
       disableCommandMerge = false,
@@ -139,11 +139,16 @@ export class Renderer {
       return {
         name: displayName,
         value: data.count,
-        time: Utils.formatTimeAgo(data.lastTime)
+        time: Utils.formatTimeAgo(data.lastTime),
+        rawTime: data.lastTime
       };
     });
     // 排序
-    chartData.sort((a, b) => sortBy === 'count' ? b.value - a.value : a.name.localeCompare(b.name));
+    chartData.sort((a, b) => {
+      if (sortBy === 'count') return b.value - a.value;
+      if (sortBy === 'time') return b.rawTime.getTime() - a.rawTime.getTime();
+      return a.name.localeCompare(b.name);
+    });
 
     return chartData;
   }

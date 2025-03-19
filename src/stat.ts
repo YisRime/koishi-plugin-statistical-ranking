@@ -16,7 +16,7 @@ interface QueryOptions {
 /**
  * 统计数据处理选项接口
  * @interface StatProcessOptions
- * @property {'key' | 'count'} [sortBy] - 排序方式，按键名或计数排序
+ * @property {'key' | 'count' | 'time'} [sortBy] - 排序方式，按键名、计数或时间排序
  * @property {number} [limit] - 限制返回的条目数量
  * @property {boolean} [disableCommandMerge] - 是否禁用命令合并
  * @property {boolean} [truncateId] - 是否缩短ID显示
@@ -28,7 +28,7 @@ interface QueryOptions {
  * @property {boolean} [skipPaging] - 是否跳过分页
  */
 export interface StatProcessOptions {
-  sortBy?: 'key' | 'count'
+  sortBy?: 'key' | 'count' | 'time'
   limit?: number
   disableCommandMerge?: boolean
   truncateId?: boolean
@@ -77,9 +77,11 @@ export const statProcessor = {
       ? (k: string) => k?.split('.')[0] || '' : undefined;
     const statsMap = Utils.generateStatsMap(filteredRecords, aggregateKey as string, keyFormatter);
     // 排序和处理数据
-    let entries = Array.from(statsMap.entries()).sort((a, b) =>
-      sortBy === 'count' ? b[1].count - a[1].count : a[0].localeCompare(b[0])
-    );
+    let entries = Array.from(statsMap.entries()).sort((a, b) => {
+      if (sortBy === 'count') return b[1].count - a[1].count;
+      if (sortBy === 'time') return new Date(b[1].lastTime).getTime() - new Date(a[1].lastTime).getTime();
+      return a[0].localeCompare(b[0]);
+    });
 
     const totalItems = entries.length;
     let pagedEntries = entries;
