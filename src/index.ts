@@ -144,15 +144,28 @@ export async function apply(ctx: Context, config: Config = {}) {
   }
   database.initialize(ctx)
 
-  // 创建渲染器实例
+  // 创建渲染器实例 - 增强初始化逻辑
   let renderer: Renderer | undefined
-  if (ctx.puppeteer) {
+  const initRenderer = async () => {
+    if (!ctx.puppeteer) {
+      ctx.logger.warn('未检测到 puppeteer 插件，图片渲染功能将不可用')
+      return undefined
+    }
+
     try {
-      renderer = new Renderer(ctx)
+      ctx.logger.debug('正在初始化统计图表渲染器...')
+      const rendererInstance = new Renderer(ctx)
+      // 测试渲染器是否正常工作
+      await ctx.puppeteer.page() // 尝试获取页面确认 puppeteer 可用
+      ctx.logger.debug('统计图表渲染器初始化成功')
+      return rendererInstance
     } catch (e) {
-      ctx.logger.error('初始化渲染器失败:', e)
+      ctx.logger.error('初始化统计图表渲染器失败:', e)
+      return undefined
     }
   }
+
+  renderer = await initRenderer()
 
   /**
    * 处理消息和命令记录
@@ -243,45 +256,59 @@ export async function apply(ctx: Context, config: Config = {}) {
       // 确定模式
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片模式
-      if (useImageMode && ctx.puppeteer && renderer) {
-        try {
-          // 准备数据集
-          const datasets = [];
-          // 加入命令统计数据
-          if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
-            datasets.push({
-              records: commandResult.records,
-              title: '命令统计',
-              key: 'command',
-              options: {
-                limit: 15,
-                truncateId: false,
-                sortBy
-              }
-            });
+      if (useImageMode && ctx.puppeteer) {
+        // 如果渲染器未初始化，尝试重新初始化
+        if (!renderer) {
+          ctx.logger.info('渲染器未初始化，尝试重新初始化...')
+          renderer = await initRenderer()
+        }
+
+        if (renderer) {
+          try {
+            // 准备数据集
+            const datasets = [];
+            // 加入命令统计数据
+            if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
+              datasets.push({
+                records: commandResult.records,
+                title: '命令统计',
+                key: 'command',
+                options: {
+                  limit: 15,
+                  truncateId: false,
+                  sortBy
+                }
+              });
+            }
+            // 加入群组统计数据
+            if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
+              datasets.push({
+                records: messageResult.records,
+                title: '发言统计',
+                key: 'guildId',
+                options: {
+                  limit: 15,
+                  truncateId: true,
+                  sortBy
+                }
+              });
+            }
+            // 生成综合统计图
+            const imageBuffer = await renderer.generateCombinedStatImage(
+              datasets,
+              `${userName}的统计`
+            );
+            await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')));
+            return;
+          } catch (e) {
+            ctx.logger.error('生成统计图片失败:', e);
+            // 当渲染失败时，提供更友好的错误信息
+            await session.send('图片渲染失败，已切换为文本模式显示');
           }
-          // 加入群组统计数据
-          if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
-            datasets.push({
-              records: messageResult.records,
-              title: '发言统计',
-              key: 'guildId',
-              options: {
-                limit: 15,
-                truncateId: true,
-                sortBy
-              }
-            });
-          }
-          // 生成综合统计图
-          const imageBuffer = await renderer.generateCombinedStatImage(
-            datasets,
-            `${userName}的统计`
-          );
-          await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')));
-          return;
-        } catch (e) {
-          ctx.logger.error('生成统计图片失败:', e);
+        } else {
+          // 如果渲染器仍然不可用，通知用户
+          ctx.logger.warn('渲染器不可用，使用文本模式显示');
+          await session.send('图片渲染器不可用，使用文本模式显示');
         }
       }
       // 文本模式输出
@@ -314,24 +341,36 @@ export async function apply(ctx: Context, config: Config = {}) {
       const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
-      if (useImageMode && ctx.puppeteer && renderer) {
-        try {
-          const imageBuffer = await renderer.generateStatImage(
-            result.records,
-            'command',
-            result.title.replace(' ——', ''),
-            {
-              sortBy,
-              disableCommandMerge: showAll,
-              displayBlacklist: showAll ? [] : config.displayBlacklist,
-              displayWhitelist: showAll ? [] : config.displayWhitelist,
-              limit: 15,
-            }
-          )
-          await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
-          return
-        } catch (e) {
-          ctx.logger.error('生成命令统计图片失败:', e)
+      if (useImageMode && ctx.puppeteer) {
+        // 如果渲染器未初始化，尝试重新初始化
+        if (!renderer) {
+          ctx.logger.info('渲染器未初始化，尝试重新初始化...')
+          renderer = await initRenderer()
+        }
+
+        if (renderer) {
+          try {
+            const imageBuffer = await renderer.generateStatImage(
+              result.records,
+              'command',
+              result.title.replace(' ——', ''),
+              {
+                sortBy,
+                disableCommandMerge: showAll,
+                displayBlacklist: showAll ? [] : config.displayBlacklist,
+                displayWhitelist: showAll ? [] : config.displayWhitelist,
+                limit: 15,
+              }
+            )
+            await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+            return
+          } catch (e) {
+            ctx.logger.error('生成命令统计图片失败:', e)
+            await session.send('图片渲染失败，已切换为文本模式显示')
+          }
+        } else {
+          ctx.logger.warn('渲染器不可用，使用文本模式显示')
+          await session.send('图片渲染器不可用，使用文本模式显示')
         }
       }
 
@@ -374,24 +413,36 @@ export async function apply(ctx: Context, config: Config = {}) {
       const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
-      if (useImageMode && ctx.puppeteer && renderer) {
-        try {
-          const imageBuffer = await renderer.generateStatImage(
-            result.records,
-            'userId',
-            result.title.replace(' ——', ''),
-            {
-              sortBy,
-              truncateId: true,
-              displayBlacklist: showAll ? [] : config.displayBlacklist,
-              displayWhitelist: showAll ? [] : config.displayWhitelist,
-              limit: 15,
-            }
-          )
-          await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
-          return
-        } catch (e) {
-          ctx.logger.error('生成用户统计图片失败:', e)
+      if (useImageMode && ctx.puppeteer) {
+        // 如果渲染器未初始化，尝试重新初始化
+        if (!renderer) {
+          ctx.logger.info('渲染器未初始化，尝试重新初始化...')
+          renderer = await initRenderer()
+        }
+
+        if (renderer) {
+          try {
+            const imageBuffer = await renderer.generateStatImage(
+              result.records,
+              'userId',
+              result.title.replace(' ——', ''),
+              {
+                sortBy,
+                truncateId: true,
+                displayBlacklist: showAll ? [] : config.displayBlacklist,
+                displayWhitelist: showAll ? [] : config.displayWhitelist,
+                limit: 15,
+              }
+            )
+            await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+            return
+          } catch (e) {
+            ctx.logger.error('生成用户统计图片失败:', e)
+            await session.send('图片渲染失败，已切换为文本模式显示')
+          }
+        } else {
+          ctx.logger.warn('渲染器不可用，使用文本模式显示')
+          await session.send('图片渲染器不可用，使用文本模式显示')
         }
       }
 
@@ -435,24 +486,36 @@ export async function apply(ctx: Context, config: Config = {}) {
       const sortBy = options.sort === 'time' ? 'time' : (options.sort === 'key' ? 'key' : 'count');
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
-      if (useImageMode && ctx.puppeteer && renderer) {
-        try {
-          const imageBuffer = await renderer.generateStatImage(
-            result.records,
-            'guildId',
-            result.title.replace(' ——', ''),
-            {
-              sortBy,
-              truncateId: true,
-              displayBlacklist: showAll ? [] : config.displayBlacklist,
-              displayWhitelist: showAll ? [] : config.displayWhitelist,
-              limit: 15,
-            }
-          )
-          await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
-          return
-        } catch (e) {
-          ctx.logger.error('生成群组统计图片失败:', e)
+      if (useImageMode && ctx.puppeteer) {
+        // 如果渲染器未初始化，尝试重新初始化
+        if (!renderer) {
+          ctx.logger.info('渲染器未初始化，尝试重新初始化...')
+          renderer = await initRenderer()
+        }
+
+        if (renderer) {
+          try {
+            const imageBuffer = await renderer.generateStatImage(
+              result.records,
+              'guildId',
+              result.title.replace(' ——', ''),
+              {
+                sortBy,
+                truncateId: true,
+                displayBlacklist: showAll ? [] : config.displayBlacklist,
+                displayWhitelist: showAll ? [] : config.displayWhitelist,
+                limit: 15,
+              }
+            )
+            await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+            return
+          } catch (e) {
+            ctx.logger.error('生成群组统计图片失败:', e)
+            await session.send('图片渲染失败，已切换为文本模式显示')
+          }
+        } else {
+          ctx.logger.warn('渲染器不可用，使用文本模式显示')
+          await session.send('图片渲染器不可用，使用文本模式显示')
         }
       }
 
