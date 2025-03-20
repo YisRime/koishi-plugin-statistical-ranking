@@ -144,33 +144,6 @@ export async function apply(ctx: Context, config: Config = {}) {
   }
   database.initialize(ctx)
 
-  // 创建一个渲染器获取函数，使用懒加载模式
-  let rendererInstance: Renderer | null = null
-  let rendererInitialized = false
-
-  /**
-   * 获取渲染器实例，采用懒加载模式
-   * @returns {Promise<Renderer | null>} 渲染器实例或null
-   */
-  const getRenderer = async (): Promise<Renderer | null> => {
-    if (rendererInitialized) return rendererInstance
-
-    rendererInitialized = true
-
-    if (!ctx.puppeteer) {
-      ctx.logger.warn('无 puppeteer 服务，无法渲染图片')
-      return null
-    }
-
-    try {
-      rendererInstance = new Renderer(ctx)
-      return rendererInstance
-    } catch (e) {
-      rendererInstance = null
-      return null
-    }
-  }
-
   /**
    * 处理消息和命令记录
    * @param {any} session - 会话对象

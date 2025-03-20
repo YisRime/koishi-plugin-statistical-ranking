@@ -9,11 +9,11 @@ import { Utils } from './utils'
  * 负责将统计数据渲染为可视化图表
  *
  * 图片样式说明:
- * - 整体风格：现代简约风格，白色背景配合柔和阴影和圆角设计
+ * - 整体风格：Material Design风格，白色背景配合Material阴影和圆角设计
  * - 颜色方案：
- *   · 命令统计：蓝色系(#1e88e5)表头
- *   · 用户统计：绿色系(#00c853)表头
- *   · 群组统计：橙色系(#ff9100)表头
+ *   · 命令统计：蓝色系(#2196F3)表头
+ *   · 用户统计：紫色系(#9C27B0)表头
+ *   · 群组统计：绿色系(#4CAF50)表头
  * - 布局结构：
  *   · 顶部标题栏：包含总项目数、主标题和时间戳
  *   · 数据表格：四列布局(名称、数量、占比、最后统计时间)
@@ -58,12 +58,16 @@ export class Renderer {
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
+              @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
               body {
                 margin: 0;
                 padding: 0;
-                font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+                font-family: "Roboto", "Microsoft YaHei", "PingFang SC", sans-serif;
                 background: white;
-                color: #333;
+                color: rgba(0, 0, 0, 0.87);
+                font-size: 14px;
+                line-height: 1.5;
+                -webkit-font-smoothing: antialiased;
               }
               table {
                 width: 100%;
@@ -73,14 +77,45 @@ export class Renderer {
                 overflow: hidden;
               }
               th, td {
-                transition: background-color 0.2s;
+                transition: background-color 0.2s ease;
               }
               tr:hover td {
-                background-color: #f5f8ff;
+                background-color: rgba(0, 0, 0, 0.04);
               }
               h2, h3 {
                 margin: 0;
                 letter-spacing: 0.5px;
+                font-weight: 500;
+              }
+              .material-card {
+                border-radius: 8px;
+                overflow: hidden;
+                background-color: #fff;
+                box-shadow: 0 2px 4px -1px rgba(0,0,0,0.2),
+                            0 4px 5px 0 rgba(0,0,0,0.14),
+                            0 1px 10px 0 rgba(0,0,0,0.12);
+                transition: box-shadow 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+              }
+              .stat-chip {
+                padding: 0 12px;
+                height: 32px;
+                display: inline-flex;
+                align-items: center;
+                border-radius: 16px;
+                font-size: 13px;
+                line-height: 32px;
+                background-color: rgba(0, 0, 0, 0.08);
+                color: rgba(0, 0, 0, 0.87);
+                white-space: nowrap;
+              }
+              .stat-table th {
+                font-weight: 500;
+                color: white;
+                padding: 16px;
+              }
+              .stat-table td {
+                padding: 16px;
+                border-bottom: 1px solid rgba(0, 0, 0, 0.08);
               }
             </style>
           </head>
@@ -254,11 +289,11 @@ export class Renderer {
       displayWhitelist: [],
       displayBlacklist: []
     });
-    // 设置颜色主题
+    // 设置 Material Design 颜色主题
     const headerColor =
-      key === 'userId' ? '#00c853' :
-      key === 'guildId' ? '#ff9100' :
-      '#1e88e5';
+      key === 'userId' ? '#9C27B0' :  // Purple 500
+      key === 'guildId' ? '#4CAF50' : // Green 500
+      '#2196F3';                     // Blue 500
     // 分页处理
     const pages = this.paginateData(chartData);
     const results: Buffer[] = [];
@@ -274,20 +309,20 @@ export class Renderer {
       const pageTitle = pages.length > 1 ? `${title} (${i+1}/${pages.length})` : title;
       // 生成HTML内容并渲染
       const html = `
-        <div style="padding:18px; box-shadow:0 2px 15px rgba(0,0,0,0.08); border-radius:12px; overflow:hidden; background-color:#fff;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; padding-bottom:10px; border-bottom:1px solid #eef0f5; flex-wrap:nowrap;">
-            <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
-              <div style="background-color:#f8f9fa; border-radius:6px; padding:5px 10px; font-size:13px; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-                <span style="color:#666;">总项目: </span>
-                <span style="font-weight:bold; color:#333;">${totalItems}</span>
+        <div class="material-card" style="padding: 24px; margin: 8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
+            <div style="display:flex; gap:12px; flex-shrink:0; margin-right:16px;">
+              <div class="stat-chip">
+                <span style="color:rgba(0,0,0,0.6);">总项目: </span>
+                <span style="font-weight:500; margin-left:4px;">${totalItems}</span>
               </div>
-              <div style="background-color:#f8f9fa; border-radius:6px; padding:5px 10px; font-size:13px; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-                <span style="color:#666;">总${key === 'command' ? '次数' : '条数'}: </span>
-                <span style="font-weight:bold; color:#333;">${totalCount}</span>
+              <div class="stat-chip">
+                <span style="color:rgba(0,0,0,0.6);">总${key === 'command' ? '次数' : '条数'}: </span>
+                <span style="font-weight:500; margin-left:4px;">${totalCount}</span>
               </div>
             </div>
-            <h2 style="margin:0; color:#333; font-size:19px; text-align:center; flex-grow:1; font-weight:600;">${pageTitle}</h2>
-            <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:5px 10px; border-radius:6px; white-space:nowrap; flex-shrink:0; margin-left:12px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">${currentTime}</div>
+            <h2 style="margin:0; font-size:20px; text-align:center; flex-grow:1; font-weight:500;">${pageTitle}</h2>
+            <div class="stat-chip" style="color:rgba(0,0,0,0.6); margin-left:16px;">${currentTime}</div>
           </div>
           ${this.generateTableHTML(pageData, key, headerColor)}
         </div>
@@ -317,11 +352,11 @@ export class Renderer {
         displayWhitelist: [],
         displayBlacklist: []
       });
-      // 设置颜色主题
+      // 设置 Material Design 颜色主题
       const headerColor =
-        dataset.key === 'userId' ? '#00c853' :
-        dataset.key === 'guildId' ? '#ff9100' :
-        '#1e88e5';
+        dataset.key === 'userId' ? '#9C27B0' :  // Purple 500
+        dataset.key === 'guildId' ? '#4CAF50' : // Green 500
+        '#2196F3';                            // Blue 500
       // 计算总次数和总项目数
       const totalItems = chartData.length;
       const totalCount = chartData.reduce((sum, item) => sum + item.value, 0);
@@ -329,7 +364,7 @@ export class Renderer {
       return { chartData, key: dataset.key, title: dataset.title, headerColor, totalItems, totalCount };
     }).filter(d => d.chartData.length > 0);
 
-    if (processedDatasets.length === 0) return [await this.htmlToImage(`<div style="padding:20px; text-align:center;">没有数据</div>`)];
+    if (processedDatasets.length === 0) return [await this.htmlToImage(`<div style="padding:24px; text-align:center;">没有数据</div>`)];
     // 计算每个数据集的行数并安排页面
     let totalRows = 0;
     processedDatasets.forEach(dataset => {
@@ -341,19 +376,19 @@ export class Renderer {
     if (totalRows <= 200) {
       const tablesHTML = processedDatasets.map(dataset => {
         return `
-          <div style="margin-bottom:22px;">
-            <div style="display:flex; align-items:center; margin:8px 0 12px 0; flex-wrap:nowrap;">
-              <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
-                <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
-                  <span style="color:#666;">总项目: </span>
-                  <span style="font-weight:bold; color:#333;">${dataset.totalItems}</span>
+          <div style="margin-bottom:32px;">
+            <div style="display:flex; align-items:center; margin:16px 0; flex-wrap:nowrap;">
+              <div style="display:flex; gap:12px; flex-shrink:0; margin-right:16px;">
+                <div class="stat-chip">
+                  <span style="color:rgba(0,0,0,0.6);">总项目: </span>
+                  <span style="font-weight:500; margin-left:4px;">${dataset.totalItems}</span>
                 </div>
-                <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
-                  <span style="color:#666;">${dataset.key === 'command' ? '次数' : '条数'}: </span>
-                  <span style="font-weight:bold; color:#333;">${dataset.totalCount}</span>
+                <div class="stat-chip">
+                  <span style="color:rgba(0,0,0,0.6);">${dataset.key === 'command' ? '次数' : '条数'}: </span>
+                  <span style="font-weight:500; margin-left:4px;">${dataset.totalCount}</span>
                 </div>
               </div>
-              <h3 style="margin:0; color:#333; font-size:17px; text-align:center; flex-grow:1; font-weight:600;">${dataset.title}</h3>
+              <h3 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${dataset.title}</h3>
               <div style="flex-shrink:0; margin-left:10px; width:1px;"></div>
             </div>
             ${this.generateTableHTML(dataset.chartData, dataset.key, dataset.headerColor)}
@@ -362,18 +397,18 @@ export class Renderer {
       }).join('');
 
       const html = `
-        <div style="padding:22px; box-shadow:0 3px 15px rgba(0,0,0,0.1); border-radius:14px; overflow:hidden; background-color:#fff;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; padding-bottom:14px; border-bottom:1px solid #eef0f5; flex-wrap:nowrap;">
+        <div class="material-card" style="padding:24px; margin:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
             <div style="min-width:10px; flex-shrink:0;"></div>
-            <h2 style="margin:0; color:#333; font-size:20px; text-align:center; flex-grow:1; font-weight:600;">${mainTitle}</h2>
-            <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:5px 10px; border-radius:6px; white-space:nowrap; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.05);">${currentTime}</div>
+            <h2 style="margin:0; font-size:22px; text-align:center; flex-grow:1; font-weight:500; color:rgba(0, 0, 0, 0.87);">${mainTitle}</h2>
+            <div class="stat-chip" style="color:rgba(0,0,0,0.6);">${currentTime}</div>
           </div>
           ${tablesHTML}
         </div>
       `;
       return [await this.htmlToImage(html)];
     } else {
-      // 复杂的分页逻辑：尽量让每个表格完整显示在一页上
+      // 尽量让每个表格完整显示在一页上
       const pages: Array<{
         datasets: Array<{chartData: any[], key: keyof StatRecord, title: string, headerColor: string, totalItems: number, totalCount: number}>
       }> = [];
@@ -414,19 +449,19 @@ export class Renderer {
 
         const tablesHTML = page.datasets.map(dataset => {
           return `
-            <div style="margin-bottom:22px;">
-              <div style="display:flex; align-items:center; margin:8px 0 12px 0; flex-wrap:nowrap;">
-                <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
-                  <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
-                    <span style="color:#666;">总项目: </span>
-                    <span style="font-weight:bold; color:#333;">${dataset.totalItems}</span>
+            <div style="margin-bottom:32px;">
+              <div style="display:flex; align-items:center; margin:16px 0; flex-wrap:nowrap;">
+                <div style="display:flex; gap:12px; flex-shrink:0; margin-right:16px;">
+                  <div class="stat-chip">
+                    <span style="color:rgba(0,0,0,0.6);">总项目: </span>
+                    <span style="font-weight:500; margin-left:4px;">${dataset.totalItems}</span>
                   </div>
-                  <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
-                    <span style="color:#666;">${dataset.key === 'command' ? '次数' : '条数'}: </span>
-                    <span style="font-weight:bold; color:#333;">${dataset.totalCount}</span>
+                  <div class="stat-chip">
+                    <span style="color:rgba(0,0,0,0.6);">${dataset.key === 'command' ? '次数' : '条数'}: </span>
+                    <span style="font-weight:500; margin-left:4px;">${dataset.totalCount}</span>
                   </div>
                 </div>
-                <h3 style="margin:0; color:#333; font-size:17px; text-align:center; flex-grow:1; font-weight:600;">${dataset.title}</h3>
+                <h3 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${dataset.title}</h3>
                 <div style="flex-shrink:0; margin-left:10px; width:1px;"></div>
               </div>
               ${this.generateTableHTML(dataset.chartData, dataset.key, dataset.headerColor)}
@@ -435,11 +470,11 @@ export class Renderer {
         }).join('');
 
         const html = `
-          <div style="padding:22px; box-shadow:0 3px 15px rgba(0,0,0,0.1); border-radius:14px; overflow:hidden; background-color:#fff;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; padding-bottom:14px; border-bottom:1px solid #eef0f5; flex-wrap:nowrap;">
+          <div class="material-card" style="padding:24px; margin:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
               <div style="min-width:10px; flex-shrink:0;"></div>
-              <h2 style="margin:0; color:#333; font-size:20px; text-align:center; flex-grow:1; font-weight:600;">${pageTitle}</h2>
-              <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:5px 10px; border-radius:6px; white-space:nowrap; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.05);">${currentTime}</div>
+              <h2 style="margin:0; font-size:22px; text-align:center; flex-grow:1; font-weight:500; color:rgba(0, 0, 0, 0.87);">${pageTitle}</h2>
+              <div class="stat-chip" style="color:rgba(0,0,0,0.6);">${currentTime}</div>
             </div>
             ${tablesHTML}
           </div>
@@ -461,7 +496,7 @@ export class Renderer {
    * @returns {string} 表格HTML
    * @private
    */
-  private generateTableHTML(data: Array<{name: string, value: number, time: string}>, key: keyof StatRecord, headerColor: string = '#6366f1'): string {
+  private generateTableHTML(data: Array<{name: string, value: number, time: string}>, key: keyof StatRecord, headerColor: string = '#2196F3'): string {
     // 计算总值用于百分比
     const totalValue = data.reduce((sum, item) => sum + item.value, 0);
     // 生成表格行HTML
@@ -470,27 +505,27 @@ export class Renderer {
         const valueText = key === 'command' ? `${item.value}次` : `${item.value}条`;
         const percentValue = (item.value / totalValue) * 100;
         const percentText = `${percentValue.toFixed(2)}%`;
-        const bgColor = index % 2 === 0 ? '#ffffff' : '#fafbfd';
+        const bgColor = index % 2 === 0 ? '#ffffff' : 'rgba(0, 0, 0, 0.02)';
 
         return `
           <tr style="background-color:${bgColor};">
-            <td style="padding:7px 10px; border-bottom:1px solid #eef0f5; font-weight:500;">${item.name}</td>
-            <td style="padding:7px 10px; border-bottom:1px solid #eef0f5; text-align:right; white-space:nowrap; font-weight:500;">${valueText}</td>
-            <td style="padding:7px 10px; border-bottom:1px solid #eef0f5; text-align:right; white-space:nowrap; font-family:monospace; color:#555;">${percentText}</td>
-            <td style="padding:7px 10px; border-bottom:1px solid #eef0f5; text-align:right; white-space:nowrap; color:#666;">${item.time}</td>
+            <td style="padding:16px; border-bottom:1px solid rgba(0,0,0,0.08); font-weight:500;">${item.name}</td>
+            <td style="padding:16px; border-bottom:1px solid rgba(0,0,0,0.08); text-align:right; white-space:nowrap; font-weight:500;">${valueText}</td>
+            <td style="padding:16px; border-bottom:1px solid rgba(0,0,0,0.08); text-align:right; white-space:nowrap; font-family:monospace; color:rgba(0,0,0,0.7);">${percentText}</td>
+            <td style="padding:16px; border-bottom:1px solid rgba(0,0,0,0.08); text-align:right; white-space:nowrap; color:rgba(0,0,0,0.54);">${item.time}</td>
           </tr>
         `;
       }).join('');
     };
     return `
-      <div style="overflow:hidden; border-radius:10px; box-shadow:0 1px 8px rgba(0,0,0,0.08);">
-        <table style="width:100%; border-collapse:separate; border-spacing:0; background:white;">
+      <div class="material-card" style="overflow:hidden; border-radius:8px;">
+        <table class="stat-table" style="width:100%; border-collapse:separate; border-spacing:0; background:white;">
           <thead>
-            <tr style="background:linear-gradient(to right, ${headerColor}, ${headerColor}cc);">
-              <th style="padding:9px 12px; text-align:left; color:white; font-weight:600; border-radius:10px 0 0 0;">名称</th>
-              <th style="padding:9px 12px; text-align:right; color:white; font-weight:600; white-space:nowrap;">数量</th>
-              <th style="padding:9px 12px; text-align:right; color:white; font-weight:600; white-space:nowrap;">占比</th>
-              <th style="padding:9px 12px; text-align:right; color:white; font-weight:600; white-space:nowrap; border-radius:0 10px 0 0;">最后时间</th>
+            <tr style="background:${headerColor};">
+              <th style="text-align:left; border-radius:8px 0 0 0;">名称</th>
+              <th style="text-align:right; white-space:nowrap;">数量</th>
+              <th style="text-align:right; white-space:nowrap;">占比</th>
+              <th style="text-align:right; white-space:nowrap; border-radius:0 8px 0 0;">最后时间</th>
             </tr>
           </thead>
           <tbody>
