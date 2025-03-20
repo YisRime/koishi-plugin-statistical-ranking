@@ -45,7 +45,7 @@ export const io = {
 
       const outputFilename = batches === 1
         ? `${filename}-${timestamp}.json`
-        : `${filename}-${timestamp}-${batch+1}-${batches}.json`
+        : `${filename}-${timestamp}-${batches}-${batch+1}.json`
       const filePath = path.join(statDir, outputFilename)
 
       try {
@@ -99,13 +99,13 @@ export const io = {
           isBatch,
           batchInfo: isBatch ? {
             base: batchMatch[1],
-            current: parseInt(batchMatch[2]),
-            total: parseInt(batchMatch[3])
+            total: parseInt(batchMatch[2]),
+            current: parseInt(batchMatch[3])
           } : undefined
         }
         // 收集批次组
         if (isBatch) {
-          const [, base, , total] = batchMatch
+          const [, base, total, ] = batchMatch
           const key = `${base}-total${total}`
           if (!batchGroups.has(key)) batchGroups.set(key, [])
           batchGroups.get(key).push(file)
@@ -120,7 +120,7 @@ export const io = {
         const groupInfo = firstFile.match(/(.*)-(\d+)-(\d+)\.json$/)
         if (!groupInfo) continue
 
-        const [, base, , total] = groupInfo
+        const [, base, total, ] = groupInfo
         const groupName = `${base}(N=${total})`
 
         fileInfo[groupName] = {
@@ -132,9 +132,15 @@ export const io = {
             base,
             total: parseInt(total),
             files: files.sort((a, b) => {
-              const aMatch = a.match(/-(\d+)-/)
-              const bMatch = b.match(/-(\d+)-/)
-              return aMatch && bMatch ? (parseInt(aMatch[1]) - parseInt(bMatch[1])) : 0
+              const aMatch = a.match(/-(\d+)-(\d+)/)
+              const bMatch = b.match(/-(\d+)-(\d+)/)
+              if (aMatch && bMatch) {
+                // 如果总批次相同则按当前批次排序
+                if (aMatch[1] === bMatch[1]) {
+                  return parseInt(aMatch[2]) - parseInt(bMatch[2]);
+                }
+              }
+              return 0;
             })
           }
         }
@@ -192,7 +198,7 @@ export const io = {
         // 收集批次文件
         const [, baseFilename, totalBatches] = match
         for (let i = 1; i <= parseInt(totalBatches); i++) {
-          const batchFile = `${baseFilename}-${i}-${totalBatches}.json`
+          const batchFile = `${baseFilename}-${totalBatches}-${i}.json`
           const batchPath = path.join(dataDir, batchFile)
           if (fs.existsSync(batchPath)) {
             files.push(batchFile)

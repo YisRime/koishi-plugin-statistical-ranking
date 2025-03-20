@@ -111,10 +111,10 @@ export const Utils = {
 
   /**
    * 获取数据目录
-   * @param {string} [subdir='stat'] 子目录名称
+   * @param {string} [subdir='statistical-ranking'] 子目录名称
    * @returns {string} 数据目录的绝对路径
    */
-  getDataDirectory(subdir: string = 'stat'): string {
+  getDataDirectory(subdir: string = 'statistical-ranking'): string {
     const dataDir = path.join(process.cwd(), 'data', subdir)
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true })
