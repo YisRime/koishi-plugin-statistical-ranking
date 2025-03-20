@@ -1,4 +1,4 @@
-import { Context, Schema, h } from 'koishi'
+import { Context, Schema, Session, h } from 'koishi'
 import { database } from './database'
 import { io } from './io'
 import { Utils } from './utils'
@@ -150,7 +150,7 @@ export async function apply(ctx: Context, config: Config = {}) {
 
   /**
    * 获取渲染器实例，采用懒加载模式
-   * @returns {Promise<Renderer|null>} 渲染器实例或null
+   * @returns {Promise<Renderer | null>} 渲染器实例或null
    */
   const getRenderer = async (): Promise<Renderer | null> => {
     if (rendererInitialized) return rendererInstance
@@ -189,19 +189,36 @@ export async function apply(ctx: Context, config: Config = {}) {
   ctx.on('message', (session) => handleRecord(session, null))
 
   /**
-   * 尝试渲染统计图片
-   * @param {any} session - 会话对象
-   * @param {Function} renderFn - 渲染函数，接收渲染器参数并返回图片buffer
-   * @returns {Promise<boolean>} 渲染成功返回true，失败返回false
+   * 尝试渲染图片并发送
+   * @param session 会话
+   * @param renderFn 渲染函数
+   * @returns 是否成功
    */
-  const tryRenderImage = async (session: any, renderFn: (renderer: Renderer) => Promise<Buffer>): Promise<boolean> => {
+  async function tryRenderImage(
+    session: Session<never, never>,
+    renderFn: (renderer: Renderer) => Promise<Buffer | Buffer[]>
+  ): Promise<boolean> {
+    if (!ctx.puppeteer) {
+      return false
+    }
+
     try {
-      const renderer = await getRenderer()
-      const imageBuffer = await renderFn(renderer)
-      await session.send(h.image('data:image/png;base64,' + imageBuffer.toString('base64')))
+      const renderer = new Renderer(ctx)
+      const result = await renderFn(renderer)
+
+      if (Array.isArray(result)) {
+        // 多页图片，依次发送
+        for (const buffer of result) {
+          await session.send(h.image(buffer, 'image/png'))
+        }
+      } else {
+        // 单页图片，直接发送
+        await session.send(h.image(result, 'image/png'))
+      }
       return true
     } catch (e) {
-      ctx.logger.error('生成统计图片失败:', e)
+      ctx.logger.error('图片渲染失败', e)
+      await session.send(`图片渲染失败: ${e.message || '未知错误'}`)
       return false
     }
   }

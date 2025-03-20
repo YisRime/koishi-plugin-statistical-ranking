@@ -11,9 +11,9 @@ import { Utils } from './utils'
  * 图片样式说明:
  * - 整体风格：现代简约风格，白色背景配合柔和阴影和圆角设计
  * - 颜色方案：
- *   · 命令统计：靛蓝色(#6366f1)表头
- *   · 用户统计：珊瑚色(#f56565)表头
- *   · 群组统计：绿松石色(#4fd1c5)表头
+ *   · 命令统计：蓝色系(#1e88e5)表头
+ *   · 用户统计：绿色系(#00c853)表头
+ *   · 群组统计：橙色系(#ff9100)表头
  * - 布局结构：
  *   · 顶部标题栏：包含总项目数、主标题和时间戳
  *   · 数据表格：四列布局(名称、数量、占比、最后统计时间)
@@ -191,19 +191,63 @@ export class Renderer {
   }
 
   /**
+   * 将统计记录分页处理
+   * @param {Array<{name: string, value: number, time: string, rawTime: Date}>} data - 统计数据
+   * @param {number} maxRowsPerPage - 每页最大行数
+   * @param {number} minRowsForNewPage - 创建新页面的最小行数
+   * @returns {Array<Array<{name: string, value: number, time: string, rawTime: Date}>>} 分页后的数据
+   */
+  paginateData(
+    data: Array<{name: string, value: number, time: string, rawTime: Date}>,
+    maxRowsPerPage: number = 200,
+    minRowsForNewPage: number = 50
+  ): Array<Array<{name: string, value: number, time: string, rawTime: Date}>> {
+    if (!data.length) return [[]];
+    if (data.length <= maxRowsPerPage) return [data];
+
+    const pages: Array<Array<{name: string, value: number, time: string, rawTime: Date}>> = [];
+    const totalRows = data.length;
+    // 计算正常情况下需要的页数
+    const normalPageCount = Math.ceil(totalRows / maxRowsPerPage);
+    // 最后一页的行数
+    const lastPageRows = totalRows - (normalPageCount - 1) * maxRowsPerPage;
+    // 如果最后一页行数少于最小行数阈值，则将内容合并到倒数第二页
+    const actualPageCount = lastPageRows < minRowsForNewPage && normalPageCount > 1
+      ? normalPageCount - 1
+      : normalPageCount;
+    // 特殊情况处理：如果总行数很少，直接返回一页
+    if (actualPageCount <= 1) return [data];
+    // 计算主要页面大小（平均分布行数）
+    const mainPageSize = Math.ceil(totalRows / actualPageCount);
+    // 分页处理
+    let currentIdx = 0;
+    for (let i = 0; i < actualPageCount; i++) {
+      // 最后一页获取所有剩余数据
+      const pageSize = i === actualPageCount - 1
+        ? totalRows - currentIdx
+        : mainPageSize;
+
+      pages.push(data.slice(currentIdx, currentIdx + pageSize));
+      currentIdx += pageSize;
+    }
+
+    return pages;
+  }
+
+  /**
    * 生成统计数据的图片
    * @param {StatRecord[]} records - 统计记录数组
    * @param {keyof StatRecord} key - 统计键名
    * @param {string} title - 图表标题
    * @param {StatProcessOptions} options - 处理选项
-   * @returns {Promise<Buffer>} 生成的图片Buffer
+   * @returns {Promise<Buffer[]>} 生成的图片Buffer数组
    */
   async generateStatImage(
     records: StatRecord[],
     key: keyof StatRecord,
     title: string,
     options: StatProcessOptions = {}
-  ): Promise<Buffer> {
+  ): Promise<Buffer[]> {
     // 转换记录为图表数据
     const chartData = this.recordsToChartData(records, key, {
       ...options,
@@ -211,94 +255,202 @@ export class Renderer {
       displayBlacklist: []
     });
     // 设置颜色主题
-    const headerColor = key === 'userId' ? '#f56565' : (key === 'guildId' ? '#4fd1c5' : '#6366f1');
+    const headerColor =
+      key === 'userId' ? '#00c853' :
+      key === 'guildId' ? '#ff9100' :
+      '#1e88e5';
+    // 分页处理
+    const pages = this.paginateData(chartData);
+    const results: Buffer[] = [];
     // 当前时间
     const currentTime = Utils.formatDateTime(new Date());
     // 计算总次数和总项目数
     const totalItems = chartData.length;
     const totalCount = chartData.reduce((sum, item) => sum + item.value, 0);
-    // 生成HTML内容并渲染
-    const html = `
-      <div style="padding:18px; box-shadow:0 2px 15px rgba(0,0,0,0.08); border-radius:12px; overflow:hidden; background-color:#fff;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; padding-bottom:10px; border-bottom:1px solid #eef0f5; flex-wrap:nowrap;">
-          <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
-            <div style="background-color:#f8f9fa; border-radius:6px; padding:5px 10px; font-size:13px; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-              <span style="color:#666;">总项目: </span>
-              <span style="font-weight:bold; color:#333;">${totalItems}</span>
+    // 为每一页生成图片
+    for (let i = 0; i < pages.length; i++) {
+      const pageData = pages[i];
+      // 只有多页时才显示页码
+      const pageTitle = pages.length > 1 ? `${title} (${i+1}/${pages.length})` : title;
+      // 生成HTML内容并渲染
+      const html = `
+        <div style="padding:18px; box-shadow:0 2px 15px rgba(0,0,0,0.08); border-radius:12px; overflow:hidden; background-color:#fff;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; padding-bottom:10px; border-bottom:1px solid #eef0f5; flex-wrap:nowrap;">
+            <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
+              <div style="background-color:#f8f9fa; border-radius:6px; padding:5px 10px; font-size:13px; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+                <span style="color:#666;">总项目: </span>
+                <span style="font-weight:bold; color:#333;">${totalItems}</span>
+              </div>
+              <div style="background-color:#f8f9fa; border-radius:6px; padding:5px 10px; font-size:13px; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+                <span style="color:#666;">总${key === 'command' ? '次数' : '条数'}: </span>
+                <span style="font-weight:bold; color:#333;">${totalCount}</span>
+              </div>
             </div>
-            <div style="background-color:#f8f9fa; border-radius:6px; padding:5px 10px; font-size:13px; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-              <span style="color:#666;">总${key === 'command' ? '次数' : '条数'}: </span>
-              <span style="font-weight:bold; color:#333;">${totalCount}</span>
-            </div>
+            <h2 style="margin:0; color:#333; font-size:19px; text-align:center; flex-grow:1; font-weight:600;">${pageTitle}</h2>
+            <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:5px 10px; border-radius:6px; white-space:nowrap; flex-shrink:0; margin-left:12px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">${currentTime}</div>
           </div>
-          <h2 style="margin:0; color:#333; font-size:19px; text-align:center; flex-grow:1; font-weight:600;">${title}</h2>
-          <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:5px 10px; border-radius:6px; white-space:nowrap; flex-shrink:0; margin-left:12px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">${currentTime}</div>
+          ${this.generateTableHTML(pageData, key, headerColor)}
         </div>
-        ${this.generateTableHTML(chartData, key, headerColor)}
-      </div>
-    `;
-    return await this.htmlToImage(html);
+      `;
+      const imageBuffer = await this.htmlToImage(html);
+      results.push(imageBuffer);
+    }
+    return results;
   }
 
   /**
    * 生成综合统计图，将用户的所有统计信息整合到一张图中
    * @param {Array<{records: StatRecord[], title: string, key: keyof StatRecord, options?: StatProcessOptions}>} datasets - 多个数据集
    * @param {string} mainTitle - 主标题
-   * @returns {Promise<Buffer>} 生成的图片Buffer
+   * @returns {Promise<Buffer[]>} 生成的图片Buffer数组
    */
   async generateCombinedStatImage(
     datasets: Array<{records: StatRecord[], title: string, key: keyof StatRecord, options?: StatProcessOptions}>,
     mainTitle: string
-  ): Promise<Buffer> {
-    // 处理数据集
-    const tablesHTML = datasets.map(dataset => {
-      if (!dataset.records.length) return '';
+  ): Promise<Buffer[]> {
+    // 处理所有数据集以获取每个数据集的行数
+    const processedDatasets = datasets.map(dataset => {
+      if (!dataset.records.length) return { chartData: [], key: dataset.key, title: dataset.title, headerColor: '', totalItems: 0, totalCount: 0 };
+
       const chartData = this.recordsToChartData(dataset.records, dataset.key, {
         ...dataset.options,
         displayWhitelist: [],
         displayBlacklist: []
       });
-
-      const headerColor = dataset.key === 'command' ? '#6366f1' :
-                         (dataset.key === 'guildId' ? '#4fd1c5' : '#f56565');
+      // 设置颜色主题
+      const headerColor =
+        dataset.key === 'userId' ? '#00c853' :
+        dataset.key === 'guildId' ? '#ff9100' :
+        '#1e88e5';
       // 计算总次数和总项目数
       const totalItems = chartData.length;
       const totalCount = chartData.reduce((sum, item) => sum + item.value, 0);
 
-      return `
-        <div style="margin-bottom:22px;">
-          <div style="display:flex; align-items:center; margin:8px 0 12px 0; flex-wrap:nowrap;">
-            <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
-              <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
-                <span style="color:#666;">总项目: </span>
-                <span style="font-weight:bold; color:#333;">${totalItems}</span>
-              </div>
-              <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
-                <span style="color:#666;">${dataset.key === 'command' ? '次数' : '条数'}: </span>
-                <span style="font-weight:bold; color:#333;">${totalCount}</span>
-              </div>
-            </div>
-            <h3 style="margin:0; color:#333; font-size:17px; text-align:center; flex-grow:1; font-weight:600;">${dataset.title}</h3>
-            <div style="flex-shrink:0; margin-left:10px; width:1px;"></div>
-          </div>
-          ${this.generateTableHTML(chartData, dataset.key, headerColor)}
-        </div>
-      `;
-    }).join('');
+      return { chartData, key: dataset.key, title: dataset.title, headerColor, totalItems, totalCount };
+    }).filter(d => d.chartData.length > 0);
+
+    if (processedDatasets.length === 0) return [await this.htmlToImage(`<div style="padding:20px; text-align:center;">没有数据</div>`)];
+    // 计算每个数据集的行数并安排页面
+    let totalRows = 0;
+    processedDatasets.forEach(dataset => {
+      totalRows += dataset.chartData.length;
+    });
     // 当前时间
     const currentTime = Utils.formatDateTime(new Date());
-    // 组合所有内容
-    const html = `
-      <div style="padding:22px; box-shadow:0 3px 15px rgba(0,0,0,0.1); border-radius:14px; overflow:hidden; background-color:#fff;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; padding-bottom:14px; border-bottom:1px solid #eef0f5; flex-wrap:nowrap;">
-          <div style="min-width:10px; flex-shrink:0;"></div>
-          <h2 style="margin:0; color:#333; font-size:20px; text-align:center; flex-grow:1; font-weight:600;">${mainTitle}</h2>
-          <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:5px 10px; border-radius:6px; white-space:nowrap; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.05);">${currentTime}</div>
+    // 如果总行数少于200，则一页显示所有内容
+    if (totalRows <= 200) {
+      const tablesHTML = processedDatasets.map(dataset => {
+        return `
+          <div style="margin-bottom:22px;">
+            <div style="display:flex; align-items:center; margin:8px 0 12px 0; flex-wrap:nowrap;">
+              <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
+                <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
+                  <span style="color:#666;">总项目: </span>
+                  <span style="font-weight:bold; color:#333;">${dataset.totalItems}</span>
+                </div>
+                <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
+                  <span style="color:#666;">${dataset.key === 'command' ? '次数' : '条数'}: </span>
+                  <span style="font-weight:bold; color:#333;">${dataset.totalCount}</span>
+                </div>
+              </div>
+              <h3 style="margin:0; color:#333; font-size:17px; text-align:center; flex-grow:1; font-weight:600;">${dataset.title}</h3>
+              <div style="flex-shrink:0; margin-left:10px; width:1px;"></div>
+            </div>
+            ${this.generateTableHTML(dataset.chartData, dataset.key, dataset.headerColor)}
+          </div>
+        `;
+      }).join('');
+
+      const html = `
+        <div style="padding:22px; box-shadow:0 3px 15px rgba(0,0,0,0.1); border-radius:14px; overflow:hidden; background-color:#fff;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; padding-bottom:14px; border-bottom:1px solid #eef0f5; flex-wrap:nowrap;">
+            <div style="min-width:10px; flex-shrink:0;"></div>
+            <h2 style="margin:0; color:#333; font-size:20px; text-align:center; flex-grow:1; font-weight:600;">${mainTitle}</h2>
+            <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:5px 10px; border-radius:6px; white-space:nowrap; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.05);">${currentTime}</div>
+          </div>
+          ${tablesHTML}
         </div>
-        ${tablesHTML}
-      </div>
-    `;
-    return await this.htmlToImage(html);
+      `;
+      return [await this.htmlToImage(html)];
+    } else {
+      // 复杂的分页逻辑：尽量让每个表格完整显示在一页上
+      const pages: Array<{
+        datasets: Array<{chartData: any[], key: keyof StatRecord, title: string, headerColor: string, totalItems: number, totalCount: number}>
+      }> = [];
+
+      let currentPage: Array<typeof processedDatasets[0]> = [];
+      let currentPageRows = 0;
+
+      for (const dataset of processedDatasets) {
+        // 如果添加这个数据集会超过每页行数限制，并且当前页已有内容，则创建新页
+        if (currentPageRows + dataset.chartData.length > 200 && currentPage.length > 0) {
+          // 除非剩余行数小于50行，且不是唯一的表格
+          if (dataset.chartData.length >= 50 || currentPage.length === 0) {
+            pages.push({ datasets: [...currentPage] });
+            currentPage = [dataset];
+            currentPageRows = dataset.chartData.length;
+          } else {
+            // 剩余行数少于50，合并到当前页
+            currentPage.push(dataset);
+            currentPageRows += dataset.chartData.length;
+          }
+        } else {
+          // 添加到当前页
+          currentPage.push(dataset);
+          currentPageRows += dataset.chartData.length;
+        }
+      }
+      // 添加剩余的最后一页
+      if (currentPage.length > 0) {
+        pages.push({ datasets: currentPage });
+      }
+      // 生成每页的图片
+      const results: Buffer[] = [];
+
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+        // 只有多页时才显示页码
+        const pageTitle = pages.length > 1 ? `${mainTitle} (${i+1}/${pages.length})` : mainTitle;
+
+        const tablesHTML = page.datasets.map(dataset => {
+          return `
+            <div style="margin-bottom:22px;">
+              <div style="display:flex; align-items:center; margin:8px 0 12px 0; flex-wrap:nowrap;">
+                <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
+                  <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
+                    <span style="color:#666;">总项目: </span>
+                    <span style="font-weight:bold; color:#333;">${dataset.totalItems}</span>
+                  </div>
+                  <div style="background-color:#f8f9fa; border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
+                    <span style="color:#666;">${dataset.key === 'command' ? '次数' : '条数'}: </span>
+                    <span style="font-weight:bold; color:#333;">${dataset.totalCount}</span>
+                  </div>
+                </div>
+                <h3 style="margin:0; color:#333; font-size:17px; text-align:center; flex-grow:1; font-weight:600;">${dataset.title}</h3>
+                <div style="flex-shrink:0; margin-left:10px; width:1px;"></div>
+              </div>
+              ${this.generateTableHTML(dataset.chartData, dataset.key, dataset.headerColor)}
+            </div>
+          `;
+        }).join('');
+
+        const html = `
+          <div style="padding:22px; box-shadow:0 3px 15px rgba(0,0,0,0.1); border-radius:14px; overflow:hidden; background-color:#fff;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; padding-bottom:14px; border-bottom:1px solid #eef0f5; flex-wrap:nowrap;">
+              <div style="min-width:10px; flex-shrink:0;"></div>
+              <h2 style="margin:0; color:#333; font-size:20px; text-align:center; flex-grow:1; font-weight:600;">${pageTitle}</h2>
+              <div style="font-size:12px; color:#888; background-color:#f8f9fa; padding:5px 10px; border-radius:6px; white-space:nowrap; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.05);">${currentTime}</div>
+            </div>
+            ${tablesHTML}
+          </div>
+        `;
+
+        const imageBuffer = await this.htmlToImage(html);
+        results.push(imageBuffer);
+      }
+
+      return results;
+    }
   }
 
   /**
@@ -338,7 +490,7 @@ export class Renderer {
               <th style="padding:9px 12px; text-align:left; color:white; font-weight:600; border-radius:10px 0 0 0;">名称</th>
               <th style="padding:9px 12px; text-align:right; color:white; font-weight:600; white-space:nowrap;">数量</th>
               <th style="padding:9px 12px; text-align:right; color:white; font-weight:600; white-space:nowrap;">占比</th>
-              <th style="padding:9px 12px; text-align:right; color:white; font-weight:600; white-space:nowrap; border-radius:0 10px 0 0;">最后统计</th>
+              <th style="padding:9px 12px; text-align:right; color:white; font-weight:600; white-space:nowrap; border-radius:0 10px 0 0;">最后时间</th>
             </tr>
           </thead>
           <tbody>
