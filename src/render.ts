@@ -509,32 +509,25 @@ export class Renderer {
   private generateTableHTML(data: Array<{name: string, value: number, time: string}>, key: keyof StatRecord, headerColor: string = '#2196F3'): string {
     // 计算总值用于百分比
     const totalValue = data.reduce((sum, item) => sum + item.value, 0);
-    // 找出最大值用于突出显示前三名
-    const maxValues = [...data]
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 3)
-      .map(item => item.value);
     // 生成表格行HTML
     const generateRows = (items) => {
       return items.map((item, index) => {
         const valueText = key === 'command' ? `${item.value}次` : `${item.value}条`;
         const percentValue = (item.value / totalValue) * 100;
         const percentText = `${percentValue.toFixed(1)}%`;
-        const isTopThree = maxValues.includes(item.value) && index < 3;
         const bgColor = index % 2 === 0 ? '#ffffff' : 'rgba(0, 0, 0, 0.01)';
-        const rowClass = isTopThree ? 'highlight-row' : '';
-        // 为百分比数据添加背景进度条
+        // 从右向左的进度条
         return `
-          <tr class="${rowClass}" style="background-color:${bgColor};">
-            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); font-weight:${isTopThree ? '500' : 'normal'};">
-              ${isTopThree ? `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background-color:${headerColor}; color:white; text-align:center; line-height:20px; margin-right:6px; font-size:12px;">${index+1}</span>` : ''}
+          <tr style="background-color:${bgColor};">
+            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04);">
               ${item.name}
             </td>
-            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; font-weight:${isTopThree ? '500' : 'normal'};">${valueText}</td>
-            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; font-family:monospace; color:rgba(0,0,0,0.78); background-image: linear-gradient(to right, ${headerColor}15 ${Math.min(percentValue * 2, 100)}%, transparent ${Math.min(percentValue * 2, 100)}%);">
-              ${percentText}
-            </td>
             <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; color:rgba(0,0,0,0.6);">${item.time}</td>
+            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap;">${valueText}</td>
+            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; font-family:monospace; color:rgba(0,0,0,0.78); position:relative;">
+              <div style="position:absolute; top:0; right:0; bottom:0; width:${Math.min(percentValue * 2, 100)}%; background-color:${headerColor}15; z-index:0;"></div>
+              <span style="position:relative; z-index:1;">${percentText}</span>
+            </td>
           </tr>
         `;
       }).join('');
@@ -546,9 +539,9 @@ export class Renderer {
           <thead>
             <tr style="background:${headerColor};">
               <th style="text-align:left; border-radius:6px 0 0 0; padding:8px 12px;">名称</th>
+              <th style="text-align:right; white-space:nowrap; padding:8px 12px;">最后时间</th>
               <th style="text-align:right; white-space:nowrap; padding:8px 12px;">数量</th>
-              <th style="text-align:right; white-space:nowrap; padding:8px 12px;">占比</th>
-              <th style="text-align:right; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px;">最后时间</th>
+              <th style="text-align:right; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px;">占比</th>
             </tr>
           </thead>
           <tbody>
