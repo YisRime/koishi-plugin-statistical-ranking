@@ -62,7 +62,7 @@ export class Renderer {
                 margin: 0;
                 padding: 0;
                 font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
-                background: white;
+                background: transparent;
                 color: rgba(0, 0, 0, 0.87);
                 font-size: 14px;
                 line-height: 1.4;
@@ -75,25 +75,20 @@ export class Renderer {
                 border-spacing: 0;
                 overflow: hidden;
               }
-              th, td {
-                transition: background-color 0.2s ease;
-              }
-              tr:hover td {
-                background-color: rgba(0, 0, 0, 0.04);
-              }
               h2, h3 {
                 margin: 0;
                 letter-spacing: 0.5px;
                 font-weight: 500;
               }
               .material-card {
-                border-radius: 8px;
+                border-radius: 10px;
                 overflow: hidden;
                 background-color: #fff;
                 box-shadow: 0 2px 4px -1px rgba(0,0,0,0.2),
                             0 4px 5px 0 rgba(0,0,0,0.14),
                             0 1px 10px 0 rgba(0,0,0,0.12);
-                transition: box-shadow 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+                margin: 4px;
+                padding: 12px;
               }
               .stat-chip {
                 padding: 0 10px;
@@ -103,18 +98,31 @@ export class Renderer {
                 border-radius: 14px;
                 font-size: 14px;
                 line-height: 28px;
-                background-color: rgba(0, 0, 0, 0.08);
+                background-color: rgba(0, 0, 0, 0.06);
                 color: rgba(0, 0, 0, 0.87);
                 white-space: nowrap;
               }
               .stat-table th {
                 font-weight: 500;
                 color: white;
-                padding: 10px;
+                padding: 8px 12px;
+                position: sticky;
+                top: 0;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
               }
               .stat-table td {
-                padding: 8px 10px;
-                border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+                padding: 6px 12px;
+                border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+                position: relative;
+              }
+              .highlight-row td {
+                background-color: rgba(33, 150, 243, 0.03);
+                font-weight: 500;
+              }
+              .table-container {
+                border-radius: 8px;
+                overflow: hidden;
+                border: 1px solid rgba(0, 0, 0, 0.06);
               }
             </style>
           </head>
@@ -308,8 +316,8 @@ export class Renderer {
       const pageTitle = pages.length > 1 ? `${title} (${i+1}/${pages.length})` : title;
       // 生成HTML内容并渲染
       const html = `
-        <div class="material-card" style="padding: 16px; margin: 6px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
+        <div class="material-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
             <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
               <div class="stat-chip">
                 <span style="color:rgba(0,0,0,0.6);">总项目: </span>
@@ -320,7 +328,7 @@ export class Renderer {
                 <span style="font-weight:500; margin-left:3px;">${totalCount}</span>
               </div>
             </div>
-            <h2 style="margin:0; font-size:20px; text-align:center; flex-grow:1; font-weight:500;">${pageTitle}</h2>
+            <h2 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${pageTitle}</h2>
             <div class="stat-chip" style="color:rgba(0,0,0,0.6); margin-left:12px;">${currentTime}</div>
           </div>
           ${this.generateTableHTML(pageData, key, headerColor)}
@@ -373,21 +381,23 @@ export class Renderer {
     const currentTime = Utils.formatDateTime(new Date());
     // 如果总行数少于200，则一页显示所有内容
     if (totalRows <= 200) {
-      const tablesHTML = processedDatasets.map(dataset => {
+      const tablesHTML = processedDatasets.map((dataset, index) => {
+        // 最后一个数据集不要下边距
+        const isLastDataset = index === processedDatasets.length - 1;
         return `
-          <div style="margin-bottom:32px;">
-            <div style="display:flex; align-items:center; margin:16px 0; flex-wrap:nowrap;">
-              <div style="display:flex; gap:12px; flex-shrink:0; margin-right:16px;">
+          <div style="margin-bottom:${isLastDataset ? '0' : '16px'};">
+            <div style="display:flex; align-items:center; margin:8px 0; flex-wrap:nowrap;">
+              <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
                 <div class="stat-chip">
                   <span style="color:rgba(0,0,0,0.6);">总项目: </span>
-                  <span style="font-weight:500; margin-left:4px;">${dataset.totalItems}</span>
+                  <span style="font-weight:500; margin-left:3px;">${dataset.totalItems}</span>
                 </div>
                 <div class="stat-chip">
                   <span style="color:rgba(0,0,0,0.6);">${dataset.key === 'command' ? '次数' : '条数'}: </span>
-                  <span style="font-weight:500; margin-left:4px;">${dataset.totalCount}</span>
+                  <span style="font-weight:500; margin-left:3px;">${dataset.totalCount}</span>
                 </div>
               </div>
-              <h3 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${dataset.title}</h3>
+              <h3 style="margin:0; font-size:16px; text-align:center; flex-grow:1; font-weight:500;">${dataset.title}</h3>
               <div style="flex-shrink:0; margin-left:10px; width:1px;"></div>
             </div>
             ${this.generateTableHTML(dataset.chartData, dataset.key, dataset.headerColor)}
@@ -396,10 +406,10 @@ export class Renderer {
       }).join('');
 
       const html = `
-        <div class="material-card" style="padding:24px; margin:8px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
+        <div class="material-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
             <div style="min-width:10px; flex-shrink:0;"></div>
-            <h2 style="margin:0; font-size:22px; text-align:center; flex-grow:1; font-weight:500; color:rgba(0, 0, 0, 0.87);">${mainTitle}</h2>
+            <h2 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500; color:rgba(0, 0, 0, 0.87);">${mainTitle}</h2>
             <div class="stat-chip" style="color:rgba(0,0,0,0.6);">${currentTime}</div>
           </div>
           ${tablesHTML}
@@ -446,10 +456,11 @@ export class Renderer {
         // 只有多页时才显示页码
         const pageTitle = pages.length > 1 ? `${mainTitle} (${i+1}/${pages.length})` : mainTitle;
 
-        const tablesHTML = page.datasets.map(dataset => {
+        const tablesHTML = page.datasets.map((dataset, index) => {
+          const isLastDataset = index === page.datasets.length - 1;
           return `
-            <div style="margin-bottom:20px;">
-              <div style="display:flex; align-items:center; margin:10px 0; flex-wrap:nowrap;">
+            <div style="margin-bottom:${isLastDataset ? '0' : '16px'};">
+              <div style="display:flex; align-items:center; margin:8px 0; flex-wrap:nowrap;">
                 <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
                   <div class="stat-chip">
                     <span style="color:rgba(0,0,0,0.6);">总项目: </span>
@@ -460,7 +471,7 @@ export class Renderer {
                     <span style="font-weight:500; margin-left:3px;">${dataset.totalCount}</span>
                   </div>
                 </div>
-                <h3 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${dataset.title}</h3>
+                <h3 style="margin:0; font-size:16px; text-align:center; flex-grow:1; font-weight:500;">${dataset.title}</h3>
                 <div style="flex-shrink:0; margin-left:10px; width:1px;"></div>
               </div>
               ${this.generateTableHTML(dataset.chartData, dataset.key, dataset.headerColor)}
@@ -469,10 +480,10 @@ export class Renderer {
         }).join('');
 
         const html = `
-          <div class="material-card" style="padding:16px; margin:6px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
+          <div class="material-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
               <div style="min-width:10px; flex-shrink:0;"></div>
-              <h2 style="margin:0; font-size:20px; text-align:center; flex-grow:1; font-weight:500; color:rgba(0, 0, 0, 0.87);">${pageTitle}</h2>
+              <h2 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500; color:rgba(0, 0, 0, 0.87);">${pageTitle}</h2>
               <div class="stat-chip" style="color:rgba(0,0,0,0.6);">${currentTime}</div>
             </div>
             ${tablesHTML}
@@ -498,33 +509,46 @@ export class Renderer {
   private generateTableHTML(data: Array<{name: string, value: number, time: string}>, key: keyof StatRecord, headerColor: string = '#2196F3'): string {
     // 计算总值用于百分比
     const totalValue = data.reduce((sum, item) => sum + item.value, 0);
+    // 找出最大值用于突出显示前三名
+    const maxValues = [...data]
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 3)
+      .map(item => item.value);
     // 生成表格行HTML
     const generateRows = (items) => {
       return items.map((item, index) => {
         const valueText = key === 'command' ? `${item.value}次` : `${item.value}条`;
         const percentValue = (item.value / totalValue) * 100;
-        const percentText = `${percentValue.toFixed(2)}%`;
-        const bgColor = index % 2 === 0 ? '#ffffff' : 'rgba(0, 0, 0, 0.02)';
-
+        const percentText = `${percentValue.toFixed(1)}%`;
+        const isTopThree = maxValues.includes(item.value) && index < 3;
+        const bgColor = index % 2 === 0 ? '#ffffff' : 'rgba(0, 0, 0, 0.01)';
+        const rowClass = isTopThree ? 'highlight-row' : '';
+        // 为百分比数据添加背景进度条
         return `
-          <tr style="background-color:${bgColor};">
-            <td style="padding:8px 10px; border-bottom:1px solid rgba(0,0,0,0.08); font-weight:500;">${item.name}</td>
-            <td style="padding:8px 10px; border-bottom:1px solid rgba(0,0,0,0.08); text-align:right; white-space:nowrap; font-weight:500;">${valueText}</td>
-            <td style="padding:8px 10px; border-bottom:1px solid rgba(0,0,0,0.08); text-align:right; white-space:nowrap; font-family:monospace; color:rgba(0,0,0,0.7);">${percentText}</td>
-            <td style="padding:8px 10px; border-bottom:1px solid rgba(0,0,0,0.08); text-align:right; white-space:nowrap; color:rgba(0,0,0,0.54);">${item.time}</td>
+          <tr class="${rowClass}" style="background-color:${bgColor};">
+            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); font-weight:${isTopThree ? '500' : 'normal'};">
+              ${isTopThree ? `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background-color:${headerColor}; color:white; text-align:center; line-height:20px; margin-right:6px; font-size:12px;">${index+1}</span>` : ''}
+              ${item.name}
+            </td>
+            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; font-weight:${isTopThree ? '500' : 'normal'};">${valueText}</td>
+            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; font-family:monospace; color:rgba(0,0,0,0.78); background-image: linear-gradient(to right, ${headerColor}15 ${Math.min(percentValue * 2, 100)}%, transparent ${Math.min(percentValue * 2, 100)}%);">
+              ${percentText}
+            </td>
+            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; color:rgba(0,0,0,0.6);">${item.time}</td>
           </tr>
         `;
       }).join('');
     };
+
     return `
-      <div class="material-card" style="overflow:hidden; border-radius:8px;">
+      <div class="table-container">
         <table class="stat-table" style="width:100%; border-collapse:separate; border-spacing:0; background:white;">
           <thead>
             <tr style="background:${headerColor};">
-              <th style="text-align:left; border-radius:8px 0 0 0; padding:8px 10px;">名称</th>
-              <th style="text-align:right; white-space:nowrap; padding:8px 10px;">数量</th>
-              <th style="text-align:right; white-space:nowrap; padding:8px 10px;">占比</th>
-              <th style="text-align:right; white-space:nowrap; border-radius:0 8px 0 0; padding:8px 10px;">最后时间</th>
+              <th style="text-align:left; border-radius:6px 0 0 0; padding:8px 12px;">名称</th>
+              <th style="text-align:right; white-space:nowrap; padding:8px 12px;">数量</th>
+              <th style="text-align:right; white-space:nowrap; padding:8px 12px;">占比</th>
+              <th style="text-align:right; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px;">最后时间</th>
             </tr>
           </thead>
           <tbody>
