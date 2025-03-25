@@ -186,9 +186,18 @@ export const statProcessor = {
       command: options.command
     })
 
-    const title = conditions.length
-      ? `${conditions.join('、')}的${typeMap[type]}统计 ——`
-      : `全局${typeMap[type]}统计 ——`
+    let title = '';
+    if (conditions.length) {
+      // 存在筛选条件，显示详细条件
+      title = `${conditions.join('、')}的${typeMap[type]}统计 ——`;
+    } else if (options.guild && type !== 'guild') {
+      // 对于命令和用户统计，当只有群组筛选时特殊处理标题
+      const guildDisplay = guildName || options.guild;
+      title = `${guildDisplay}的${typeMap[type]}统计 ——`;
+    } else {
+      // 全局统计
+      title = `全局${typeMap[type]}统计 ——`;
+    }
 
     return { records, title }
   },

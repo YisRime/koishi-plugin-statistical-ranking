@@ -347,6 +347,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('visual', '-v 切换可视化模式')
+    .option('all', '-a 显示全局统计')
     .option('sort', '-s [method:string] 排序方式', { fallback: 'count' })
     .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
@@ -357,7 +358,14 @@ export async function apply(ctx: Context, config: Config = {}) {
       } else if (arg && /^\d+$/.test(arg)) {
         page = parseInt(arg)
       }
-
+      // 如果未指定群组选项且未指定全局选项，默认使用当前群组
+      if (!options.guild && !options.all && session.guildId) {
+        options.guild = session.guildId
+      }
+      // 如果在私聊中使用且未指定任何筛选条件，则显示全局统计
+      if (!session.guildId && !options.guild && !options.user && !options.platform) {
+        options.all = true
+      }
       const result = await statProcessor.handleStatQuery(ctx, options, 'command')
       if (typeof result === 'string') return result
       // 获取用户选择的排序方式
@@ -405,6 +413,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('visual', '-v 切换可视化模式')
+    .option('all', '-a 显示全局统计')
     .option('sort', '-s [method:string] 排序方式', { fallback: 'count' })
     .action(async ({options, args, session}) => {
       const arg = args[0]?.toLowerCase()
@@ -415,7 +424,14 @@ export async function apply(ctx: Context, config: Config = {}) {
       } else if (arg && /^\d+$/.test(arg)) {
         page = parseInt(arg)
       }
-
+      // 如果未指定群组选项且未指定全局选项，默认使用当前群组
+      if (!options.guild && !options.all && session.guildId) {
+        options.guild = session.guildId
+      }
+      // 如果在私聊中使用且未指定任何筛选条件，则显示全局统计
+      if (!session.guildId && !options.guild && !options.platform) {
+        options.all = true
+      }
       const result = await statProcessor.handleStatQuery(ctx, options, 'user')
       if (typeof result === 'string') return result
       // 获取用户选择的排序方式
@@ -459,7 +475,7 @@ export async function apply(ctx: Context, config: Config = {}) {
    * 群组统计子命令
    * 用于查看特定群组的发言统计
    */
-  stat.subcommand('.guild [arg:string]', '查看群组统计')
+  stat.subcommand('.guild [arg:string]', '查看群组统计', { authority: 2 })
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
