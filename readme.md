@@ -19,8 +19,9 @@
 ## 配置项
 
 - `enableDataTransfer`: 是否启用数据导入导出功能（默认开启）
-- `enableClear`: 是否启用数据清除功能（默认开启）
 - `defaultImageMode`: 是否默认使用图片模式展示（默认关闭）
+- `silentMode`: 是否启用静默模式，限制插件只在特定群组中响应（默认关闭）
+- `allowedGuilds`: 静默模式白名单群组ID列表，只有列表中的群组可以使用统计命令
 - `displayWhitelist`: 显示过滤白名单，仅展示匹配的记录（优先级高于黑名单）
   - 例如: ['onebot:12345:67890', '.help']
 - `displayBlacklist`: 显示过滤黑名单，不默认展示匹配的记录

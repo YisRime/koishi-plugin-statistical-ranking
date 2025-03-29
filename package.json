@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-statistical-ranking",
   "description": "统计所有命令使用和成员发言记录，支持筛选展示列表，可以切换文本和图片两种展示形式",
-  "version": "1.8.7",
+  "version": "1.8.8",
   "contributors": [
     "Yis_Rime <yis_rime@outlook.com>"
   ],

@@ -19,17 +19,19 @@ export const inject = {
  * 插件配置接口
  * @interface Config
  * @property {boolean} [enableDataTransfer] - 是否启用数据导入导出功能
- * @property {boolean} [enableClear] - 是否启用数据清除功能
  * @property {string[]} [displayBlacklist] - 显示过滤黑名单
  * @property {string[]} [displayWhitelist] - 显示过滤白名单
  * @property {boolean} [defaultImageMode] - 是否默认使用图片模式展示
+ * @property {boolean} [silentMode] - 是否启用静默模式
+ * @property {string[]} [allowedGuilds] - 静默模式下允许响应的群组列表
  */
 export interface Config {
   enableDataTransfer?: boolean
-  enableClear?: boolean
   displayBlacklist?: string[]
   displayWhitelist?: string[]
   defaultImageMode?: boolean
+  silentMode?: boolean
+  allowedGuilds?: string[]
 }
 
 /**
@@ -37,9 +39,9 @@ export interface Config {
  */
 export const Config = Schema.intersect([
   Schema.object({
-    enableClear: Schema.boolean().default(true).description('启用数据清除'),
     enableDataTransfer: Schema.boolean().default(true).description('启用导入导出'),
-    defaultImageMode: Schema.boolean().default(false).description('默认渲染图片'),
+    defaultImageMode: Schema.boolean().default(false).description('默认以图片输出'),
+    silentMode: Schema.boolean().default(false).description('静默模式'),
     displayWhitelist: Schema.array(Schema.string())
       .description('显示白名单：仅展示以下记录（优先级高于黑名单）')
       .default([]),
@@ -49,6 +51,9 @@ export const Config = Schema.intersect([
         'qq:1234:5678',
         '.message',
       ]),
+    allowedGuilds: Schema.array(Schema.string())
+      .description('静默模式白名单群组ID')
+      .default([]),
     }).description('统计配置'),
 ])
 
@@ -135,11 +140,12 @@ interface BindingRecord {
 export async function apply(ctx: Context, config: Config = {}) {
 
   config = {
-    enableClear: true,
     enableDataTransfer: true,
     defaultImageMode: false,
     displayWhitelist: [],
     displayBlacklist: [],
+    silentMode: false,
+    allowedGuilds: [],
     ...config
   }
   database.initialize(ctx)
@@ -160,6 +166,17 @@ export async function apply(ctx: Context, config: Config = {}) {
 
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
   ctx.on('message', (session) => handleRecord(session, null))
+
+  /**
+   * 静默模式拦截器函数
+   * @param {any} argv 命令参数
+   * @returns {boolean|void} 是否终止命令执行
+   */
+  function silentModeInterceptor(argv) {
+    if (!argv.session.guildId) return;
+    if (config.allowedGuilds.includes(argv.session.guildId)) return;
+    argv.session.terminate();
+  }
 
   /**
    * 尝试渲染图片并发送
@@ -342,7 +359,7 @@ export async function apply(ctx: Context, config: Config = {}) {
    * 命令统计子命令
    * 用于查看特定命令的使用统计
    */
-  stat.subcommand('.command [arg:string]', '查看命令统计')
+  const commandStat = stat.subcommand('.command [arg:string]', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
@@ -409,7 +426,7 @@ export async function apply(ctx: Context, config: Config = {}) {
    * 用户统计子命令
    * 用于查看特定用户的发言统计
    */
-  stat.subcommand('.user [arg:string]', '查看发言统计')
+  const userStat = stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('visual', '-v 切换可视化模式')
@@ -531,11 +548,15 @@ export async function apply(ctx: Context, config: Config = {}) {
     })
 
   statProcessor.registerListCommand(ctx, stat)
+  database.registerClearCommand(ctx, stat)
 
-  if (config.enableClear) {
-    database.registerClearCommand(ctx, stat)
-  }
   if (config.enableDataTransfer) {
     io.registerCommands(ctx, stat)
+  }
+
+  if (config.silentMode) {
+    stat.before(silentModeInterceptor)
+    commandStat.before(silentModeInterceptor)
+    userStat.before(silentModeInterceptor)
   }
 }
