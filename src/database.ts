@@ -136,24 +136,23 @@ export const database = {
         await ctx.database.remove('analytics.stat', query)
         // 构建条件描述
         const conditions = Utils.buildConditions(options)
-        let message = conditions.length
-          ? `已删除${conditions.join('、')}的统计记录（共${deleteCount}条）`
-          : `已删除所有统计记录`
-        // 添加阈值信息和删除数量
+        let message = '';
         const belowText = options.below > 0 ? `少于${options.below}次` : '';
         const beforeText = options.time > 0 ? `${options.time}天前` : '';
         const thresholdText = [belowText, beforeText].filter(Boolean).join('且');
-
-        if (thresholdText) {
-          message = onlyBelowSpecified
-            ? `已删除所有少于${options.below}次的统计记录（共${deleteCount}条）`
-            : onlyBeforeSpecified
-              ? `已删除所有${options.time}天前的统计记录（共${deleteCount}条）`
-              : `已删除${message}中${thresholdText}的统计记录（共${deleteCount}条）`;
+        if (onlyBelowSpecified) {
+          message = `已删除所有少于${options.below}次的统计记录`;
+        } else if (onlyBeforeSpecified) {
+          message = `已删除所有${options.time}天前的统计记录`;
+        } else if (conditions.length) {
+          message = `已删除${conditions.join('、')}的统计记录`;
+          if (thresholdText) {
+            message += `中${thresholdText}的记录`;
+          }
         } else {
-          message += `（共${deleteCount}条）`;
+          message = `已删除所有统计记录`;
         }
-
+        message += `（共${deleteCount}条）`;
         return message
       })
   }
