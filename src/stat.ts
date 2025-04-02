@@ -214,17 +214,16 @@ export const statProcessor = {
 
     if (key === 'command') {
       const commands = uniqueKeys.filter(cmd => cmd !== '_message')
-      return commands.length ? `${title} ——\n${commands.join(', ')}` : null
+      return commands.length ? `${title} ——\n${commands.join(',')}` : null
     } else if (key === 'userId' || key === 'guildId') {
       const items = uniqueKeys.map(id => {
         const record = records.find(r => r[key] === id)
         const name = key === 'userId' ? record?.userName : record?.guildName
         return name ? `${name} (${id})` : id
       })
-      return items.length ? `${title} ——\n${items.join(', ')}` : null
+      return items.length ? `${title} ——\n${items.join(',')}` : null
     }
-
-    return uniqueKeys.length ? `${title} ——\n${uniqueKeys.join(', ')}` : null
+    return uniqueKeys.length ? `${title} ——\n${uniqueKeys.join(',')}` : null
   },
 
   /**

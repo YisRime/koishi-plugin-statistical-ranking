@@ -40,6 +40,9 @@ export const database = {
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
     data.command ||= '_message'
 
+    if (data.guildId && data.guildId.includes('private')) {
+      return;
+    }
     try {
       const query = {
         platform: data.platform,
