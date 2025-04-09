@@ -39,10 +39,7 @@ export const database = {
    */
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
     data.command ||= '_message'
-
-    if (data.guildId && data.guildId.includes('private')) {
-      return;
-    }
+    if (data.guildId?.includes('private')) return;
     try {
       const query = {
         platform: data.platform,
@@ -50,25 +47,19 @@ export const database = {
         userId: data.userId,
         command: data.command
       }
-
       const normalizedData = Utils.normalizeRecord(data, { sanitizeNames: true });
       const userName = normalizedData.userName;
       const guildName = normalizedData.guildName;
-
       const [existing] = await ctx.database.get('analytics.stat', query)
       if (existing) {
-        // 更新现有记录
         const updateData: Partial<StatRecord> = {
           count: existing.count + 1,
           lastTime: new Date()
         }
-        // 只在有新值时更新用户名和群组名
         if (userName !== undefined) updateData.userName = userName
         if (guildName !== undefined) updateData.guildName = guildName
-
         await ctx.database.set('analytics.stat', query, updateData)
       } else {
-        // 创建新记录
         await ctx.database.create('analytics.stat', {
           ...query,
           userName,
@@ -88,10 +79,6 @@ export const database = {
    * @param {any} parent 父命令对象
    */
   registerClearCommand(ctx: Context, parent: any) {
-    /**
-     * 统计数据清除子命令
-     * 用于清除特定条件下的统计数据
-     */
     parent.subcommand('.clear', '清除统计数据', { authority: 4 })
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
@@ -121,7 +108,9 @@ export const database = {
           return '已删除所有统计记录'
         }
         // 构建查询条件
-        const query: any = Utils.filterObject(cleanOptions)
+        const query: any = Object.fromEntries(
+          Object.entries(cleanOptions).filter(([_, value]) => Boolean(value))
+        );
         // 添加记录数阈值条件
         if (options.below > 0) {
           query.count = { $lt: options.below }

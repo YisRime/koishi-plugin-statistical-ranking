@@ -43,10 +43,12 @@ export const Utils = {
   sanitizeString(input: string): string {
     if (input == null) return ''
     return String(input)
-      .replace(/[\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\x00-\x1F\x7F]/g, '')
-      .replace(/[\u{10000}-\u{10FFFF}]/u, '□')
-      .replace(/(.)\1{9,}/g, '$1$1$1…')
-      .replace(/[\<\>\`\$\(\)\[\]\{\}\;\'\"\\\=]/g, '*')
+      // 移除控制字符和零宽字符
+      .replace(/[\x00-\x1F\x7F\u200B-\u200F\u2028-\u202F\uFEFF]/g, '')
+      // 简化连续重复的字符
+      .replace(/(.)\1{3,}/g, '$1$1$1…')
+      // 替换可能导致数据库问题的字符
+      .replace(/[<>`$()[\]{};'"\\\=]/g, '')
       .replace(/\s+/g, ' ').trim()
       .slice(0, 64)
   },
@@ -60,7 +62,6 @@ export const Utils = {
     if (!date?.getTime?.()) return '未知时间'
     const diff = Date.now() - date.getTime()
     if (Math.abs(diff) < 3000) return (diff < 0 ? '一会后' : '一会前')
-
     const units: [number, string][] = [
       [31536000000, '年'],
       [2592000000, '月'],
@@ -69,27 +70,22 @@ export const Utils = {
       [60000, '分'],
       [1000, '秒']
     ]
-
     const absDiff = Math.abs(diff)
     const suffix = diff < 0 ? '后' : '前'
-
     for (let i = 0; i < units.length; i++) {
       const [primaryDiv, primaryUnit] = units[i]
       if (absDiff < primaryDiv) continue
       const primaryVal = Math.floor(absDiff / primaryDiv)
-
       if (i < units.length - 1) {
         const [secondaryDiv, secondaryUnit] = units[i + 1]
         const remainder = absDiff % primaryDiv
         const secondaryVal = Math.floor(remainder / secondaryDiv)
-
         if (secondaryVal > 0) {
           return `${primaryVal}${primaryUnit}${secondaryVal}${secondaryUnit}${suffix}`
         }
       }
       return `${primaryVal}${primaryUnit}${suffix}`
     }
-
     return `一会${suffix}`
   },
 
@@ -105,7 +101,6 @@ export const Utils = {
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
-
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   },
 
@@ -148,23 +143,20 @@ export const Utils = {
    */
   async getSessionInfo(session: any) {
     if (!session) return null
-
     const platform = session.platform
     const guildId = session.guildId || session.groupId || session.channelId || 'private'
     const userId = await this.getPlatformId(session)
     const bot = session.bot
-
     let userName = '', guildName = ''
-    try {
-      userName = session.username ?? (bot?.getGuildMember
-        ? (await bot.getGuildMember(guildId, userId).catch(() => null))?.username
-        : '') ?? ''
-
-      guildName = guildId === 'private'
-        ? ''
-        : (await bot?.getGuild?.(guildId).catch(() => null))?.name ?? ''
-    } catch {}
-
+    userName = session.username ?? ''
+    if (!userName && bot?.getGuildMember) {
+      const member = await bot.getGuildMember(guildId, userId).catch(() => null)
+      userName = member?.username ?? ''
+    }
+    if (guildId !== 'private' && bot?.getGuild) {
+      const guild = await bot.getGuild(guildId).catch(() => null)
+      guildName = guild?.name ?? ''
+    }
     return {
       platform,
       guildId,
@@ -172,17 +164,6 @@ export const Utils = {
       userName: this.sanitizeString(userName),
       guildName: this.sanitizeString(guildName)
     }
-  },
-
-  /**
-   * 过滤对象，移除空值
-   * @param {Record<string, any>} obj 要过滤的对象
-   * @returns {Record<string, any>} 过滤后的对象
-   */
-  filterObject(obj: Record<string, any>): Record<string, any> {
-    return Object.fromEntries(
-      Object.entries(obj).filter(([_, value]) => Boolean(value))
-    )
   },
 
   /**
@@ -215,9 +196,7 @@ export const Utils = {
       guild: ['群组', options.guild],
       platform: ['平台', options.platform],
       command: ['命令', options.command]
-    })
-      .filter(([_, [__, value]]) => value)
-      .map(([_, [label, value]]) => `${label}${value}`)
+    }).filter(([_, [__, value]]) => value).map(([_, [label, value]]) => `${label}${value}`)
   },
 
   /**
@@ -228,7 +207,6 @@ export const Utils = {
    */
   normalizeRecord(record: any, options: { sanitizeNames?: boolean } = {}): any {
     const result = { ...record };
-
     if (options.sanitizeNames) {
       if (result.userName) {
         result.userName = this.sanitizeString(result.userName);
@@ -245,7 +223,6 @@ export const Utils = {
     if (result.count && typeof result.count !== 'number') {
       result.count = parseInt(String(result.count)) || 1;
     }
-
     return result;
   },
 
@@ -258,34 +235,27 @@ export const Utils = {
    */
   generateStatsMap(records: any[], keyField: string, keyFormatter?: (key: string) => string): Map<string, any> {
     const dataMap = new Map<string, {count: number, lastTime: Date, displayName?: string}>();
-
     records.forEach(record => {
       const recordKey = record[keyField];
       if (!recordKey) return;
-
       const formattedKey = keyFormatter ? keyFormatter(recordKey) : recordKey;
       let displayName = formattedKey;
-
       if (keyField === 'userId' && record.userName) {
         displayName = record.userName;
       } else if (keyField === 'guildId' && record.guildName) {
         displayName = record.guildName;
       }
-
       const current = dataMap.get(formattedKey) || {
         count: 0,
         lastTime: record.lastTime,
         displayName
       };
-
       current.count += record.count;
       if (record.lastTime > current.lastTime) {
         current.lastTime = record.lastTime;
       }
-
       dataMap.set(formattedKey, current);
     });
-
     return dataMap;
   },
 
@@ -307,7 +277,6 @@ export const Utils = {
       displayBlacklist = [],
       disableCommandMerge = false
     } = options;
-
     let filteredRecords = records;
     // 按命令类型过滤
     if (keyField === 'command' && !disableCommandMerge) {
@@ -358,11 +327,7 @@ export const Utils = {
     if (!name) return id || '';
     const cleanName = this.sanitizeString(name);
     if (!cleanName || /^[\s*□]+$/.test(cleanName)) return id || '';
-
-    if (truncateId || cleanName === id || cleanName.includes(id)) {
-      return cleanName;
-    }
-
+    if (truncateId || cleanName === id || cleanName.includes(id)) return cleanName
     return `${cleanName} (${id})`;
   }
 }

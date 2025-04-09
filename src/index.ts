@@ -5,10 +5,6 @@ import { Utils } from './utils'
 import { statProcessor } from './stat'
 import { Renderer } from './render'
 
-/**
- * @packageDocumentation
- * 统计与排名插件 - 用于统计和分析用户命令使用情况与活跃度
- */
 export const name = 'statistical-ranking'
 export const inject = {
   required: ['database'],
@@ -58,7 +54,7 @@ export const Config = Schema.intersect([
 ])
 
 /**
- * Koishi 数据表声明
+ * 数据表声明
  */
 declare module 'koishi' {
   interface Tables {
@@ -128,17 +124,10 @@ interface BindingRecord {
 /**
  * 插件主函数
  * @public
- *
- * 初始化插件功能：
- * - 设置数据库结构
- * - 注册事件监听器
- * - 注册指令
- *
  * @param ctx - Koishi应用上下文
  * @param config - 插件配置对象
  */
 export async function apply(ctx: Context, config: Config = {}) {
-
   config = {
     enableDataTransfer: true,
     defaultImageMode: false,
@@ -159,7 +148,6 @@ export async function apply(ctx: Context, config: Config = {}) {
   const handleRecord = async (session: any, command?: string) => {
     const info = await Utils.getSessionInfo(session)
     if (!info) return
-
     const commandValue = command || '_message'
     await database.saveRecord(ctx, { ...info, command: commandValue })
   }
@@ -188,14 +176,10 @@ export async function apply(ctx: Context, config: Config = {}) {
     session: Session<never, never>,
     renderFn: (renderer: Renderer) => Promise<Buffer | Buffer[]>
   ): Promise<boolean> {
-    if (!ctx.puppeteer) {
-      return false
-    }
-
+    if (!ctx.puppeteer) return false
     try {
       const renderer = new Renderer(ctx)
       const result = await renderFn(renderer)
-
       if (Array.isArray(result)) {
         // 多页图片，依次发送
         for (const buffer of result) {
@@ -213,10 +197,6 @@ export async function apply(ctx: Context, config: Config = {}) {
     }
   }
 
-  /**
-   * 主统计命令
-   * 用于查看用户的个人统计信息
-   */
   const stat = ctx.command('stat [arg:string]', '查看统计信息')
     .option('visual', '-v 切换可视化模式')
     .option('sort', '-s [method:string] 排序方式', { fallback: 'count' })
@@ -321,11 +301,7 @@ export async function apply(ctx: Context, config: Config = {}) {
               records: commandResult.records,
               title: '命令统计',
               key: 'command',
-              options: {
-                limit: 15,
-                truncateId: false,
-                sortBy
-              }
+              options: { sortBy, limit: 15, truncateId: false }
             });
           }
           // 加入群组统计数据
@@ -334,31 +310,18 @@ export async function apply(ctx: Context, config: Config = {}) {
               records: messageResult.records,
               title: '发言统计',
               key: 'guildId',
-              options: {
-                limit: 15,
-                truncateId: true,
-                sortBy
-              }
+              options: { sortBy, limit: 15, truncateId: true }
             });
           }
           // 生成综合统计图
-          return await renderer.generateCombinedStatImage(
-            datasets,
-            `${displayName}的统计`
-          );
-        })
-
-        if (renderSuccess) return
+          return await renderer.generateCombinedStatImage(datasets, `${displayName}的统计`);
+        });
+        if (renderSuccess) return;
       }
-
       // 文本模式输出
       return title + '\n' + items.join('\n');
     })
 
-  /**
-   * 命令统计子命令
-   * 用于查看特定命令的使用统计
-   */
   const commandStat = stat.subcommand('.command [arg:string]', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
@@ -402,12 +365,10 @@ export async function apply(ctx: Context, config: Config = {}) {
               displayWhitelist: showAll ? [] : config.displayWhitelist,
               limit: 15,
             }
-          )
-        })
-
-        if (renderSuccess) return
+          );
+        });
+        if (renderSuccess) return;
       }
-
       const processed = await statProcessor.processStatRecords(result.records, 'command', {
         sortBy,
         disableCommandMerge: showAll,
@@ -418,14 +379,9 @@ export async function apply(ctx: Context, config: Config = {}) {
         title: result.title,
         skipPaging: showAll
       })
-
       return processed.title + '\n' + processed.items.join('\n');
     })
 
-  /**
-   * 用户统计子命令
-   * 用于查看特定用户的发言统计
-   */
   const userStat = stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
@@ -470,10 +426,8 @@ export async function apply(ctx: Context, config: Config = {}) {
             }
           )
         })
-
         if (renderSuccess) return
       }
-
       const processed = await statProcessor.processStatRecords(result.records, 'userId', {
         sortBy,
         truncateId: true,
@@ -484,14 +438,9 @@ export async function apply(ctx: Context, config: Config = {}) {
         title: result.title,
         skipPaging: showAll
       })
-
       return processed.title + '\n' + processed.items.join('\n');
     })
 
-  /**
-   * 群组统计子命令
-   * 用于查看特定群组的发言统计
-   */
   stat.subcommand('.guild [arg:string]', '查看群组统计', { authority: 2 })
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
@@ -507,7 +456,6 @@ export async function apply(ctx: Context, config: Config = {}) {
       } else if (arg && /^\d+$/.test(arg)) {
         page = parseInt(arg)
       }
-
       const result = await statProcessor.handleStatQuery(ctx, options, 'guild')
       if (typeof result === 'string') return result
       // 获取用户选择的排序方式
@@ -529,10 +477,8 @@ export async function apply(ctx: Context, config: Config = {}) {
             }
           )
         })
-
         if (renderSuccess) return
       }
-
       const processed = await statProcessor.processStatRecords(result.records, 'guildId', {
         sortBy,
         truncateId: true,
@@ -543,7 +489,6 @@ export async function apply(ctx: Context, config: Config = {}) {
         title: result.title,
         skipPaging: showAll
       })
-
       return processed.title + '\n' + processed.items.join('\n');
     })
 
@@ -553,7 +498,6 @@ export async function apply(ctx: Context, config: Config = {}) {
   if (config.enableDataTransfer) {
     io.registerCommands(ctx, stat)
   }
-
   if (config.silentMode) {
     stat.before(silentModeInterceptor)
     commandStat.before(silentModeInterceptor)
