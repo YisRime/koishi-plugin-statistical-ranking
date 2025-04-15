@@ -94,11 +94,6 @@ export const database = {
           guildId: options.guild,
           command: options.command
         }
-        // 检查是否只指定了below选项或time选项
-        const onlyBelowSpecified = options.below > 0 &&
-          !Object.values(cleanOptions).some(Boolean) && options.time <= 0;
-        const onlyBeforeSpecified = options.time > 0 &&
-          !Object.values(cleanOptions).some(Boolean) && options.below <= 0;
         // 检查是否没有指定任何条件
         if (!options.below && !options.time && !Object.values(cleanOptions).some(Boolean)) {
           ctx.logger.info('正在删除所有统计记录并重建数据表...')
@@ -107,14 +102,24 @@ export const database = {
           ctx.logger.info('已删除所有统计记录')
           return '已删除所有统计记录'
         }
+        // 在删除前查询以获取用户和群组的昵称
+        let userName = '', guildName = ''
+        if (options.user) {
+          const userRecords = await ctx.database.get('analytics.stat', { userId: options.user })
+          const userRecord = userRecords.find(r => r.userName)
+          userName = userRecord?.userName || ''
+        }
+        if (options.guild) {
+          const guildRecords = await ctx.database.get('analytics.stat', { guildId: options.guild })
+          const guildRecord = guildRecords.find(r => r.guildName)
+          guildName = guildRecord?.guildName || ''
+        }
         // 构建查询条件
         const query: any = Object.fromEntries(
           Object.entries(cleanOptions).filter(([_, value]) => Boolean(value))
         );
         // 添加记录数阈值条件
-        if (options.below > 0) {
-          query.count = { $lt: options.below }
-        }
+        if (options.below > 0) { query.count = { $lt: options.below } }
         // 添加时间阈值条件
         if (options.time > 0) {
           const cutoffDate = new Date();
@@ -127,25 +132,24 @@ export const database = {
         // 执行删除操作
         await ctx.database.remove('analytics.stat', query)
         // 构建条件描述
-        const conditions = Utils.buildConditions(options)
-        let message = '';
-        const belowText = options.below > 0 ? `少于${options.below}次` : '';
-        const beforeText = options.time > 0 ? `${options.time}天前` : '';
-        const thresholdText = [belowText, beforeText].filter(Boolean).join('且');
-        if (onlyBelowSpecified) {
-          message = `已删除所有少于${options.below}次的统计记录`;
-        } else if (onlyBeforeSpecified) {
-          message = `已删除所有${options.time}天前的统计记录`;
-        } else if (conditions.length) {
-          message = `已删除${conditions.join('、')}的统计记录`;
-          if (thresholdText) {
-            message += `中${thresholdText}的记录`;
-          }
-        } else {
-          message = `已删除所有统计记录`;
+        const conditions = Utils.buildConditions({
+          user: options.user ? (userName || options.user) : null,
+          guild: options.guild ? (guildName || options.guild) : null,
+          platform: options.platform,
+          command: options.command
+        })
+        const thresholdConditions = [
+          options.below > 0 && `少于${options.below}次`,
+          options.time > 0 && `在${options.time}天前`
+        ].filter(Boolean);
+        // 组装最终消息
+        let message = '已删除';
+        message += conditions.length ? `${conditions.join('、')}的` : '所有';
+        if (thresholdConditions.length) {
+          message += `${thresholdConditions.join('且')}的`;
         }
-        message += `（共${deleteCount}条）`;
-        return message
+        message += `统计记录（共${deleteCount}条）`;
+        return message;
       })
   }
 }
