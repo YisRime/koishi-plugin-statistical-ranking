@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/koishi-plugin-statistical-ranking?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-statistical-ranking)
 
-统计所有命令使用和成员发言记录，支持筛选展示列表，可以切换文本和图片两种展示形式
+统计命令使用和成员发言记录，支持分命令/群组/用户统计，支持导入导出
 
 ## 功能
 

@@ -6,10 +6,21 @@ import { statProcessor } from './stat'
 import { Renderer } from './render'
 
 export const name = 'statistical-ranking'
-export const inject = {
-  required: ['database'],
-  optional: ['puppeteer']
-}
+export const inject = { required: ['database'], optional: ['puppeteer'] }
+
+export const usage = `
+<div style="border-radius: 10px; border: 1px solid #ddd; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+  <h2 style="margin-top: 0; color: #4a6ee0;">📌 插件说明</h2>
+  <p>📖 <strong>使用文档</strong>：请点击左上角的 <strong>插件主页</strong> 查看插件使用文档</p>
+  <p>🔍 <strong>更多插件</strong>：可访问 <a href="https://github.com/YisRime" style="color:#4a6ee0;text-decoration:none;">苡淞的 GitHub</a> 查看本人的所有插件</p>
+</div>
+
+<div style="border-radius: 10px; border: 1px solid #ddd; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+  <h2 style="margin-top: 0; color: #e0574a;">❤️ 支持与反馈</h2>
+  <p>🌟 喜欢这个插件？请在 <a href="https://github.com/YisRime" style="color:#e0574a;text-decoration:none;">GitHub</a> 上给我一个 Star！</p>
+  <p>🐛 遇到问题？请通过 <strong>Issues</strong> 提交反馈，或加入 QQ 群 <a href="https://qm.qq.com/q/PdLMx9Jowq" style="color:#e0574a;text-decoration:none;"><strong>855571375</strong></a> 进行交流</p>
+</div>
+`
 
 /**
  * 插件配置接口
@@ -141,7 +152,7 @@ export async function apply(ctx: Context, config: Config = {}) {
 
   /**
    * 处理消息和命令记录
-   * @param {any} session - 会话对象
+   * @param {Session} session - 会话对象
    * @param {string} [command] - 命令名称，为空时表示普通消息
    * @returns {Promise<void>}
    */
@@ -157,8 +168,10 @@ export async function apply(ctx: Context, config: Config = {}) {
 
   /**
    * 静默模式拦截器函数
-   * @param {any} argv 命令参数
-   * @returns {boolean|void} 是否终止命令执行
+   * @param {object} argv - 命令参数对象
+   * @param {Session} argv.session - 会话对象
+   * @returns {boolean|void} 如果需要终止命令执行则返回true
+   * @description 检查当前会话是否在静默模式下允许执行命令
    */
   function silentModeInterceptor(argv) {
     if (!argv.session.guildId) return;
@@ -168,9 +181,10 @@ export async function apply(ctx: Context, config: Config = {}) {
 
   /**
    * 尝试渲染图片并发送
-   * @param session 会话
-   * @param renderFn 渲染函数
-   * @returns 是否成功
+   * @param {Session} session - 会话对象
+   * @param {Function} renderFn - 渲染函数，接收Renderer实例作为参数，返回Promise<Buffer|Buffer[]>
+   * @returns {Promise<boolean>} 渲染是否成功
+   * @description 使用puppeteer渲染图片并发送，如果失败则返回false
    */
   async function tryRenderImage(
     session: Session<never, never>,
@@ -197,6 +211,10 @@ export async function apply(ctx: Context, config: Config = {}) {
     }
   }
 
+  /**
+   * 主统计命令
+   * @description 查看用户的统计信息，支持命令使用和消息发送统计
+   */
   const stat = ctx.command('stat [arg:string]', '查看统计信息')
     .option('visual', '-v 切换可视化模式')
     .option('sort', '-s [method:string] 排序方式', { fallback: 'count' })
@@ -321,7 +339,6 @@ export async function apply(ctx: Context, config: Config = {}) {
       // 文本模式输出
       return title + '\n' + items.join('\n');
     })
-
   const commandStat = stat.subcommand('.command [arg:string]', '查看命令统计')
     .option('user', '-u [user:string] 指定用户统计')
     .option('guild', '-g [guild:string] 指定群组统计')
@@ -381,7 +398,6 @@ export async function apply(ctx: Context, config: Config = {}) {
       })
       return processed.title + '\n' + processed.items.join('\n');
     })
-
   const userStat = stat.subcommand('.user [arg:string]', '查看发言统计')
     .option('guild', '-g [guild:string] 指定群组统计')
     .option('platform', '-p [platform:string] 指定平台统计')
@@ -440,7 +456,6 @@ export async function apply(ctx: Context, config: Config = {}) {
       })
       return processed.title + '\n' + processed.items.join('\n');
     })
-
   stat.subcommand('.guild [arg:string]', '查看群组统计', { authority: 2 })
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
@@ -495,9 +510,16 @@ export async function apply(ctx: Context, config: Config = {}) {
   statProcessor.registerListCommand(ctx, stat)
   database.registerClearCommand(ctx, stat)
 
+  /**
+   * 根据配置决定是否启用数据导入导出功能
+   */
   if (config.enableDataTransfer) {
     io.registerCommands(ctx, stat)
   }
+
+  /**
+   * 根据配置决定是否启用静默模式
+   */
   if (config.silentMode) {
     stat.before(silentModeInterceptor)
     commandStat.before(silentModeInterceptor)

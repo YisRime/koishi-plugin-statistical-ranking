@@ -295,7 +295,6 @@ export const Utils = {
         return !displayBlacklist.some(pattern => key.includes(pattern));
       });
     }
-
     return filteredRecords;
   },
 
