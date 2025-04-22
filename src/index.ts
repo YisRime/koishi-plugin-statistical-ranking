@@ -1,9 +1,10 @@
-import { Context, Schema, Session, h } from 'koishi'
+import { Context, Schema } from 'koishi'
+import {} from 'koishi-plugin-cron'
 import { database } from './database'
 import { io } from './io'
 import { Utils } from './utils'
 import { statProcessor } from './stat'
-import { Renderer } from './render'
+import { DailyStats, DailyRecord } from './rank'
 
 export const name = 'statistical-ranking'
 export const inject = { required: ['database'], optional: ['puppeteer'] }
@@ -31,6 +32,7 @@ export const usage = `
  * @property {boolean} [defaultImageMode] - 是否默认使用图片模式展示
  * @property {boolean} [silentMode] - 是否启用静默模式
  * @property {string[]} [allowedGuilds] - 静默模式下允许响应的群组列表
+ * @property {boolean} [enableRank] - 是否启用每日排行
  */
 export interface Config {
   enableDataTransfer?: boolean
@@ -39,6 +41,7 @@ export interface Config {
   defaultImageMode?: boolean
   silentMode?: boolean
   allowedGuilds?: string[]
+  enableRank?: boolean
 }
 
 /**
@@ -46,21 +49,15 @@ export interface Config {
  */
 export const Config = Schema.intersect([
   Schema.object({
-    enableDataTransfer: Schema.boolean().default(true).description('启用导入导出'),
-    defaultImageMode: Schema.boolean().default(false).description('默认以图片输出'),
-    silentMode: Schema.boolean().default(false).description('静默模式'),
+    enableRank: Schema.boolean().description('启用每日排行').default(false),
+    enableDataTransfer: Schema.boolean().description('启用导入导出').default(true),
+    defaultImageMode: Schema.boolean().description('默认以图片输出').default(false),
+    silentMode: Schema.boolean().description('静默模式').default(false),
     displayWhitelist: Schema.array(Schema.string())
-      .description('显示白名单：仅展示以下记录（优先级高于黑名单）')
-      .default([]),
+      .description('显示白名单：仅展示以下记录（优先级高于黑名单）').default([]),
     displayBlacklist: Schema.array(Schema.string())
-      .description('显示黑名单：不默认展示以下记录(platform:guild:user/.command)')
-      .default([
-        'qq:1234:5678',
-        '.message',
-      ]),
-    allowedGuilds: Schema.array(Schema.string())
-      .description('静默模式白名单群组ID')
-      .default([]),
+      .description('显示黑名单：不默认展示以下记录').default([ 'qq:1234:5678', '.message' ]),
+    allowedGuilds: Schema.array(Schema.string()).description('静默模式白名单群组ID').default([]),
     }).description('统计配置'),
 ])
 
@@ -70,6 +67,7 @@ export const Config = Schema.intersect([
 declare module 'koishi' {
   interface Tables {
     'analytics.stat': StatRecord
+    'analytics.daily': DailyRecord
     'analytics.command': LegacyCommandRecord
     binding: BindingRecord
   }
@@ -146,9 +144,10 @@ export async function apply(ctx: Context, config: Config = {}) {
     displayBlacklist: [],
     silentMode: false,
     allowedGuilds: [],
+    enableRank: true,
     ...config
   }
-  database.initialize(ctx)
+  database.initialize(ctx, config.enableRank)
 
   /**
    * 处理消息和命令记录
@@ -177,38 +176,6 @@ export async function apply(ctx: Context, config: Config = {}) {
     if (!argv.session.guildId) return;
     if (config.allowedGuilds.includes(argv.session.guildId)) return;
     argv.session.terminate();
-  }
-
-  /**
-   * 尝试渲染图片并发送
-   * @param {Session} session - 会话对象
-   * @param {Function} renderFn - 渲染函数，接收Renderer实例作为参数，返回Promise<Buffer|Buffer[]>
-   * @returns {Promise<boolean>} 渲染是否成功
-   * @description 使用puppeteer渲染图片并发送，如果失败则返回false
-   */
-  async function tryRenderImage(
-    session: Session<never, never>,
-    renderFn: (renderer: Renderer) => Promise<Buffer | Buffer[]>
-  ): Promise<boolean> {
-    if (!ctx.puppeteer) return false
-    try {
-      const renderer = new Renderer(ctx)
-      const result = await renderFn(renderer)
-      if (Array.isArray(result)) {
-        // 多页图片，依次发送
-        for (const buffer of result) {
-          await session.send(h.image(buffer, 'image/png'))
-        }
-      } else {
-        // 单页图片，直接发送
-        await session.send(h.image(result, 'image/png'))
-      }
-      return true
-    } catch (e) {
-      ctx.logger.error('图片渲染失败', e)
-      await session.send(`图片渲染失败: ${e.message || '未知错误'}`)
-      return false
-    }
   }
 
   /**
@@ -310,30 +277,35 @@ export async function apply(ctx: Context, config: Config = {}) {
       // 图片模式
       if (useImageMode) {
         // 尝试渲染图片
-        const renderSuccess = await tryRenderImage(session, async (renderer) => {
-          // 准备数据集
-          const datasets = [];
-          // 加入命令统计数据
-          if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
-            datasets.push({
-              records: commandResult.records,
-              title: '命令统计',
-              key: 'command',
-              options: { sortBy, limit: 15, truncateId: false }
-            });
-          }
-          // 加入群组统计数据
-          if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
-            datasets.push({
-              records: messageResult.records,
-              title: '发言统计',
-              key: 'guildId',
-              options: { sortBy, limit: 15, truncateId: true }
-            });
-          }
-          // 生成综合统计图
-          return await renderer.generateCombinedStatImage(datasets, `${displayName}的统计`);
-        });
+        const renderSuccess = await Utils.tryRenderImage(
+          session,
+          ctx,
+          async (renderer) => {
+            // 准备数据集
+            const datasets = [];
+            // 加入命令统计数据
+            if (typeof commandResult !== 'string' && commandResult.records.length > 0) {
+              datasets.push({
+                records: commandResult.records,
+                title: '命令统计',
+                key: 'command',
+                options: { sortBy, limit: 15, truncateId: false }
+              });
+            }
+            // 加入群组统计数据
+            if (typeof messageResult !== 'string' && messageResult.records.length > 0) {
+              datasets.push({
+                records: messageResult.records,
+                title: '发言统计',
+                key: 'guildId',
+                options: { sortBy, limit: 15, truncateId: true }
+              });
+            }
+            // 生成综合统计图
+            return await renderer.generateCombinedStatImage(datasets, `${displayName}的统计`);
+          },
+          () => title + '\n' + items.join('\n')
+        );
         if (renderSuccess) return;
       }
       // 文本模式输出
@@ -370,8 +342,10 @@ export async function apply(ctx: Context, config: Config = {}) {
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
       if (useImageMode) {
-        const renderSuccess = await tryRenderImage(session, async (renderer) => {
-          return await renderer.generateStatImage(
+        const renderSuccess = await Utils.tryRenderImage(
+          session,
+          ctx,
+          (renderer) => renderer.generateStatImage(
             result.records,
             'command',
             result.title.replace(' ——', ''),
@@ -382,8 +356,18 @@ export async function apply(ctx: Context, config: Config = {}) {
               displayWhitelist: showAll ? [] : config.displayWhitelist,
               limit: 15,
             }
-          );
-        });
+          ),
+          async () => {
+            const processed = await statProcessor.processStatRecords(result.records, 'command', {
+              sortBy,
+              disableCommandMerge: showAll,
+              displayBlacklist: showAll ? [] : config.displayBlacklist,
+              displayWhitelist: showAll ? [] : config.displayWhitelist,
+              page, pageSize: 15, title: result.title, skipPaging: showAll
+            });
+            return processed.title + '\n' + processed.items.join('\n');
+          }
+        );
         if (renderSuccess) return;
       }
       const processed = await statProcessor.processStatRecords(result.records, 'command', {
@@ -428,8 +412,10 @@ export async function apply(ctx: Context, config: Config = {}) {
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
       if (useImageMode) {
-        const renderSuccess = await tryRenderImage(session, async (renderer) => {
-          return await renderer.generateStatImage(
+        const renderSuccess = await Utils.tryRenderImage(
+          session,
+          ctx,
+          (renderer) => renderer.generateStatImage(
             result.records,
             'userId',
             result.title.replace(' ——', ''),
@@ -440,9 +426,19 @@ export async function apply(ctx: Context, config: Config = {}) {
               displayWhitelist: showAll ? [] : config.displayWhitelist,
               limit: 15,
             }
-          )
-        })
-        if (renderSuccess) return
+          ),
+          async () => {
+            const processed = await statProcessor.processStatRecords(result.records, 'userId', {
+              sortBy,
+              truncateId: true,
+              displayBlacklist: showAll ? [] : config.displayBlacklist,
+              displayWhitelist: showAll ? [] : config.displayWhitelist,
+              page, pageSize: 15, title: result.title, skipPaging: showAll
+            });
+            return processed.title + '\n' + processed.items.join('\n');
+          }
+        );
+        if (renderSuccess) return;
       }
       const processed = await statProcessor.processStatRecords(result.records, 'userId', {
         sortBy,
@@ -456,7 +452,7 @@ export async function apply(ctx: Context, config: Config = {}) {
       })
       return processed.title + '\n' + processed.items.join('\n');
     })
-  stat.subcommand('.guild [arg:string]', '查看群组统计', { authority: 2 })
+  const guildStat = stat.subcommand('.guild [arg:string]', '查看群组统计', { authority: 2 })
     .option('user', '-u [user:string] 指定用户统计')
     .option('platform', '-p [platform:string] 指定平台统计')
     .option('command', '-c [command:string] 指定命令统计')
@@ -478,8 +474,10 @@ export async function apply(ctx: Context, config: Config = {}) {
       const useImageMode = options.visual ? !config.defaultImageMode : config.defaultImageMode;
       // 图片渲染逻辑
       if (useImageMode) {
-        const renderSuccess = await tryRenderImage(session, async (renderer) => {
-          return await renderer.generateStatImage(
+        const renderSuccess = await Utils.tryRenderImage(
+          session,
+          ctx,
+          (renderer) => renderer.generateStatImage(
             result.records,
             'guildId',
             result.title.replace(' ——', ''),
@@ -490,9 +488,19 @@ export async function apply(ctx: Context, config: Config = {}) {
               displayWhitelist: showAll ? [] : config.displayWhitelist,
               limit: 15,
             }
-          )
-        })
-        if (renderSuccess) return
+          ),
+          async () => {
+            const processed = await statProcessor.processStatRecords(result.records, 'guildId', {
+              sortBy,
+              truncateId: true,
+              displayBlacklist: showAll ? [] : config.displayBlacklist,
+              displayWhitelist: showAll ? [] : config.displayWhitelist,
+              page, pageSize: 15, title: result.title, skipPaging: showAll
+            });
+            return processed.title + '\n' + processed.items.join('\n');
+          }
+        );
+        if (renderSuccess) return;
       }
       const processed = await statProcessor.processStatRecords(result.records, 'guildId', {
         sortBy,
@@ -510,19 +518,20 @@ export async function apply(ctx: Context, config: Config = {}) {
   statProcessor.registerListCommand(ctx, stat)
   database.registerClearCommand(ctx, stat)
 
-  /**
-   * 根据配置决定是否启用数据导入导出功能
-   */
   if (config.enableDataTransfer) {
     io.registerCommands(ctx, stat)
   }
 
-  /**
-   * 根据配置决定是否启用静默模式
-   */
+  const commands = [stat, commandStat, userStat, guildStat]
+
+  if (config.enableRank) {
+    const dailyStats = new DailyStats(ctx, typeof ctx.cron === 'function')
+    commands.push(dailyStats.registerCommands(stat))
+  }
+
   if (config.silentMode) {
-    stat.before(silentModeInterceptor)
-    commandStat.before(silentModeInterceptor)
-    userStat.before(silentModeInterceptor)
+    for (const cmd of commands) {
+      cmd && cmd.before(silentModeInterceptor)
+    }
   }
 }

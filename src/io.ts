@@ -65,7 +65,7 @@ export const io = {
    * @param {Context} ctx Koishi 上下文
    * @returns {Promise<{files: string[], fileInfo: Record<string, any>}>} 文件列表和详细信息
    */
-  async listImportFiles(ctx: Context) {
+  async listImportFiles() {
     const statDir = Utils.getDataDirectory()
     const files = await fs.promises.readdir(statDir)
     const statFiles = files.filter(file =>

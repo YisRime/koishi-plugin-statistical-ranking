@@ -1,6 +1,7 @@
 import { Context } from 'koishi'
 import { StatRecord } from './index'
 import { Utils } from './utils'
+import { DailyRecord } from './rank'
 
 /**
  * @internal
@@ -11,9 +12,11 @@ export const database = {
   /**
    * 初始化数据库表结构
    * @param ctx - Koishi 上下文
-   * @description 创建并定义 analytics.stat 表的结构
+   * @param enableDaily - 是否初始化日常统计相关表
+   * @description 创建并定义表结构
    */
-  initialize(ctx: Context) {
+  initialize(ctx: Context, enableDaily: boolean = false) {
+    // 初始化统计表
     ctx.model.extend('analytics.stat', {
       id: 'unsigned',
       platform: { type: 'string', length: 60 },
@@ -29,6 +32,23 @@ export const database = {
       autoInc: true,
       unique: [['platform', 'guildId', 'userId', 'command']],
     })
+    if (enableDaily) {
+      // 初始化日常统计表
+      ctx.model.extend('analytics.daily', {
+        id: 'unsigned',
+        platform: { type: 'string', length: 60 },
+        guildId: { type: 'string', length: 150 },
+        userId: { type: 'string', length: 150 },
+        userName: { type: 'string', nullable: true },
+        guildName: { type: 'string', nullable: true },
+        date: 'string',
+        count: 'unsigned',
+      }, {
+        primary: 'id',
+        autoInc: true,
+        unique: [['platform', 'guildId', 'userId', 'date']],
+      })
+    }
   },
 
   /**
@@ -70,6 +90,57 @@ export const database = {
       }
     } catch (e) {
       ctx.logger.error('保存记录失败:', e, data)
+    }
+  },
+
+  /**
+   * 保存或更新日常统计记录
+   * @param ctx - Koishi 上下文
+   * @param records - 日常统计记录数组
+   * @param date - 日期字符串 (YYYY-MM-DD)
+   * @returns {Promise<{ savedCount: number }>} 保存的记录数
+   */
+  async saveDailyRecords(
+    ctx: Context,
+    records: Map<string, DailyRecord>,
+    date: string
+  ): Promise<{ savedCount: number }> {
+    let savedCount = 0
+    try {
+      // 查询已存在的记录，避免重复创建
+      const existingRecords = await ctx.database.get('analytics.daily', { date })
+      const existingKeys = new Set(
+        existingRecords.map(r => `${r.platform}:${r.guildId}:${r.userId}`)
+      )
+      // 批量处理每条记录
+      for (const record of records.values()) {
+        const key = `${record.platform}:${record.guildId}:${record.userId}`
+        try {
+          // 检查记录是否已存在
+          if (existingKeys.has(key)) {
+            // 更新现有记录
+            await ctx.database.set('analytics.daily', {
+              platform: record.platform,
+              guildId: record.guildId,
+              userId: record.userId,
+              date
+            }, {
+              count: record.count,
+              userName: record.userName,
+              guildName: record.guildName
+            })
+          } else {
+            // 创建新记录
+            await ctx.database.create('analytics.daily', record)
+          }
+          savedCount++
+        } catch (err) {
+          ctx.logger.error(`保存日常统计记录失败:`, err)
+        }
+      }
+      return { savedCount }
+    } catch (e) {
+      ctx.logger.error('批量保存日常统计记录失败:', e)
     }
   },
 
