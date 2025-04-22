@@ -59,12 +59,14 @@ interface PaginatedRankResult {
  * 日常统计功能模块
  */
 export class DailyStats {
-  private readonly CRON_TIME = '0 0 0 * * *'
+  private readonly CRON_TIME: string
 
   constructor(
     private ctx: Context,
-    private enableAutoReset: boolean = true
+    private enableAutoReset: boolean = true,
+    cronTime: string = '0 0 0 * * *'
   ) {
+    this.CRON_TIME = cronTime
     if (this.enableAutoReset && typeof ctx.cron === 'function') {
       ctx.cron(this.CRON_TIME, this.dailyReset.bind(this))
     }
@@ -154,38 +156,249 @@ export class DailyStats {
   }
 
   /**
+   * 手动收集指定时间段的统计数据
+   * @param periodStr 时间段字符串，如 2h/3d/1w/1m/2024-06-01
+   */
+  async collectPeriod(periodStr: string = '1d') {
+    const now = new Date();
+    let start: Date, end: Date, unit: 'h' | 'd' = 'd';
+    let steps = 1;
+    periodStr = String(periodStr).toLowerCase();
+    const match = periodStr.match(/^(\d+)([hdwmy])$/);
+    if (match) {
+      const num = parseInt(match[1]);
+      const type = match[2];
+      if (type === 'h') {
+        unit = 'h';
+        steps = num;
+        end = new Date(now);
+        start = new Date(now.getTime() - (num - 1) * 60 * 60 * 1000);
+      } else {
+        let days = 0;
+        if (type === 'd') days = num;
+        else if (type === 'w') days = num * 7;
+        else if (type === 'm') days = num * 30;
+        else if (type === 'y') days = num * 365;
+        steps = days;
+        unit = 'd';
+        end = new Date(now);
+        end.setDate(end.getDate() - 1);
+        start = new Date(end);
+        start.setDate(end.getDate() - days + 1);
+      }
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(periodStr)) {
+      // 指定日期
+      start = new Date(periodStr);
+      end = new Date(periodStr);
+      steps = 1;
+      unit = 'd';
+    } else if (/^\d+$/.test(periodStr)) {
+      // 纯数字，按天处理
+      steps = parseInt(periodStr);
+      unit = 'd';
+      end = new Date(now);
+      end.setDate(end.getDate() - 1);
+      start = new Date(end);
+      start.setDate(end.getDate() - steps + 1);
+    } else {
+      // 默认1天
+      steps = 1;
+      unit = 'd';
+      end = new Date(now);
+      end.setDate(end.getDate() - 1);
+      start = new Date(end);
+    }
+
+    if (unit === 'h') {
+      for (let i = 0; i < steps; i++) {
+        const target = new Date(end.getTime() - i * 60 * 60 * 1000);
+        const dateStr = Utils.formatDate(target, 'date');
+        const hour = target.getHours();
+        await this.collectHour(dateStr, hour);
+      }
+    } else {
+      for (let i = 0; i < steps; i++) {
+        const target = new Date(end);
+        target.setDate(end.getDate() - i);
+        const dateStr = Utils.formatDate(target, 'date');
+        await this.collectDay(dateStr);
+      }
+    }
+  }
+
+  /**
+   * 按天收集统计数据
+   * @param dateStr 目标日期字符串 YYYY-MM-DD
+   */
+  private async collectDay(dateStr: string) {
+    // 检查是否已有记录
+    const existingRecords = await this.ctx.database.get('analytics.daily', { date: dateStr });
+    if (existingRecords.length > 0) return;
+    // 获取前一天
+    const prevDate = new Date(dateStr);
+    prevDate.setDate(prevDate.getDate() - 1);
+    const prevDateStr = Utils.formatDate(prevDate, 'date');
+    // 并行获取所有需要的数据
+    const [currentStatRecords, previousDailyData, oldYesterdayData] = await Promise.all([
+      this.ctx.database.get('analytics.stat', { command: '_message' }),
+      this.ctx.database.get('analytics.daily', { date: prevDateStr }),
+      this.ctx.database.get('analytics.stat', {
+        command: '_message',
+        lastTime: {
+          $gte: new Date(`${dateStr}T00:00:00`),
+          $lte: new Date(`${dateStr}T23:59:59`)
+        }
+      }).catch(() => [])
+    ]);
+    const previousDailyMap = new Map(
+      previousDailyData.map(r => [`${r.platform}:${r.guildId}:${r.userId}`, r])
+    );
+    const oldDataMap = new Map(
+      oldYesterdayData
+        .filter(r => r.platform && r.guildId && r.guildId !== 'private' && r.userId)
+        .map(r => [
+          `${r.platform}:${r.guildId}:${r.userId}`,
+          { count: r.count || 1, userName: r.userName, guildName: r.guildName }
+        ])
+    );
+    const dailyData = new Map<string, DailyRecord>();
+    for (const record of currentStatRecords) {
+      if (!(record.platform && record.guildId && record.guildId !== 'private' && record.userId)) continue;
+      const key = `${record.platform}:${record.guildId}:${record.userId}`;
+      const prevRecord = previousDailyMap.get(key);
+      const oldData = oldDataMap.get(key);
+      const dailyCount = prevRecord
+        ? Math.max(0, record.count - prevRecord.count)
+        : (oldData ? oldData.count : record.count);
+      if (dailyCount > 0) {
+        dailyData.set(key, {
+          platform: record.platform,
+          guildId: record.guildId,
+          userId: record.userId,
+          userName: record.userName || oldData?.userName,
+          guildName: record.guildName || oldData?.guildName,
+          date: dateStr,
+          count: dailyCount
+        });
+      }
+    }
+    if (dailyData.size > 0) {
+      await database.saveDailyRecords(this.ctx, dailyData, dateStr);
+    }
+  }
+
+  /**
+   * 按小时收集统计数据（每小时为一条daily，date字段为YYYY-MM-DD HH）
+   * @param dateStr 日期字符串 YYYY-MM-DD
+   * @param hour 小时数 0-23
+   */
+  private async collectHour(dateStr: string, hour: number) {
+    const hourStr = `${dateStr} ${String(hour).padStart(2, '0')}`;
+    // 检查是否已有记录
+    const existingRecords = await this.ctx.database.get('analytics.daily', { date: hourStr });
+    if (existingRecords.length > 0) return;
+    // 获取前一小时
+    let prevHour = hour - 1, prevDate = new Date(dateStr);
+    if (prevHour < 0) {
+      prevHour = 23;
+      prevDate.setDate(prevDate.getDate() - 1);
+    }
+    const prevHourStr = `${Utils.formatDate(prevDate, 'date')} ${String(prevHour).padStart(2, '0')}`;
+    // 并行获取所有需要的数据
+    const [currentStatRecords, previousDailyData, oldHourData] = await Promise.all([
+      this.ctx.database.get('analytics.stat', { command: '_message' }),
+      this.ctx.database.get('analytics.daily', { date: prevHourStr }),
+      this.ctx.database.get('analytics.stat', {
+        command: '_message',
+        lastTime: {
+          $gte: new Date(`${dateStr}T${String(hour).padStart(2, '0')}:00:00`),
+          $lte: new Date(`${dateStr}T${String(hour).padStart(2, '0')}:59:59`)
+        }
+      }).catch(() => [])
+    ]);
+    const previousDailyMap = new Map(
+      previousDailyData.map(r => [`${r.platform}:${r.guildId}:${r.userId}`, r])
+    );
+    const oldDataMap = new Map(
+      oldHourData
+        .filter(r => r.platform && r.guildId && r.guildId !== 'private' && r.userId)
+        .map(r => [
+          `${r.platform}:${r.guildId}:${r.userId}`,
+          { count: r.count || 1, userName: r.userName, guildName: r.guildName }
+        ])
+    );
+    const dailyData = new Map<string, DailyRecord>();
+    for (const record of currentStatRecords) {
+      if (!(record.platform && record.guildId && record.guildId !== 'private' && record.userId)) continue;
+      const key = `${record.platform}:${record.guildId}:${record.userId}`;
+      const prevRecord = previousDailyMap.get(key);
+      const oldData = oldDataMap.get(key);
+      const dailyCount = prevRecord
+        ? Math.max(0, record.count - prevRecord.count)
+        : (oldData ? oldData.count : record.count);
+      if (dailyCount > 0) {
+        dailyData.set(key, {
+          platform: record.platform,
+          guildId: record.guildId,
+          userId: record.userId,
+          userName: record.userName || oldData?.userName,
+          guildName: record.guildName || oldData?.guildName,
+          date: hourStr,
+          count: dailyCount
+        });
+      }
+    }
+    if (dailyData.size > 0) {
+      await database.saveDailyRecords(this.ctx, dailyData, hourStr);
+    }
+  }
+
+  /**
    * 查询指定时间段内的排行数据
    */
   private async getRankDataByPeriod(params: RankQueryParams): Promise<RankResult> {
-    const period = params.period || 'yesterday';
-    const today = new Date();
+    let period = params.period || 'yesterday';
+    const now = new Date();
+    const today = new Date(now);
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
-    // 默认为昨天
     let startDate = Utils.formatDate(yesterday);
     let endDate = Utils.formatDate(yesterday);
     let periodLabel = '昨日';
-    // 根据时间段设置日期范围
-    if (period === 'lastweek') {
-      const lastWeekStart = new Date(today);
-      lastWeekStart.setDate(today.getDate() - 7);
-      startDate = Utils.formatDate(lastWeekStart);
-      endDate = Utils.formatDate(yesterday);
-      periodLabel = '上周';
-    } else if (period === 'lastmonth') {
-      const lastMonthStart = new Date(today);
-      lastMonthStart.setDate(today.getDate() - 30);
-      startDate = Utils.formatDate(lastMonthStart);
-      endDate = Utils.formatDate(yesterday);
-      periodLabel = '上月';
-    } else if (period === 'lastyear') {
-      const lastYearStart = new Date(today);
-      lastYearStart.setDate(today.getDate() - 365);
-      startDate = Utils.formatDate(lastYearStart);
-      endDate = Utils.formatDate(yesterday);
-      periodLabel = '上年';
-    } else if (/^\d+d$/.test(period)) {
-      const days = parseInt(period.replace('d', ''));
+
+    // 支持 Nh/d/w/m/y 形式和 YYYY-MM-DD
+    const periodStr = String(period).toLowerCase();
+    const match = periodStr.match(/^(\d+)([hdwmy])$/);
+    if (match) {
+      const num = parseInt(match[1]);
+      const unit = match[2];
+      let start: Date;
+      if (unit === 'h') {
+        start = new Date(now.getTime() - num * 60 * 60 * 1000);
+        startDate = Utils.formatDate(start);
+        endDate = Utils.formatDate(now);
+        periodLabel = `${num}小时内`;
+      } else {
+        let days = 0;
+        if (unit === 'd') days = num;
+        else if (unit === 'w') days = num * 7;
+        else if (unit === 'm') days = num * 30;
+        else if (unit === 'y') days = num * 365;
+        if (days > 0 && days <= 365) {
+          const customStart = new Date(today);
+          customStart.setDate(today.getDate() - days);
+          startDate = Utils.formatDate(customStart);
+          endDate = Utils.formatDate(yesterday);
+          periodLabel = `${num}${unit}内`;
+        }
+      }
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(periodStr)) {
+      startDate = periodStr;
+      endDate = periodStr;
+      periodLabel = periodStr;
+    } else if (/^\d+d$/.test(periodStr)) {
+      // 兼容原有 d 结尾
+      const days = parseInt(periodStr.replace('d', ''));
       if (days > 0 && days <= 365) {
         const customStart = new Date(today);
         customStart.setDate(today.getDate() - days);
@@ -193,10 +406,6 @@ export class DailyStats {
         endDate = Utils.formatDate(yesterday);
         periodLabel = `${days}天内`;
       }
-    } else if (/^\d{4}-\d{2}-\d{2}$/.test(period)) {
-      startDate = period;
-      endDate = period;
-      periodLabel = period;
     }
     // 构建查询条件
     const dateCondition = startDate === endDate
@@ -294,22 +503,30 @@ export class DailyStats {
    * @returns 创建的子命令对象
    */
   registerCommands(parent: any) {
-    const rank = parent.subcommand('.rank [period:string]', '查看发言排行榜')
+    const rank = parent.subcommand('.rank [arg:string]', '查看发言排行榜')
       .option('visual', '-v 切换可视化模式')
-      .option('platform', '-p [platform:string] 指定平台')
-      .option('guild', '-g [guild:string] 指定群组ID')
-      .option('page', '-pg [page:number] 指定页码', { fallback: 1 })
+      .option('platform', '-p [platform:string] 指定平台统计')
+      .option('guild', '-g [guild:string] 指定群组统计')
       .option('sort', '-s [method:string] 排序方式(count/name)', { fallback: 'count' })
-      .usage('支持的时间段：yesterday(昨天)、lastweek(上周)、lastmonth(上月)、lastyear(上年)、30d(30天内)或YYYY-MM-DD')
+      .option('date', '-d [period:string] 指定时期（如 2h/2d/3w/1m/2024-06-01）', { fallback: '1d' })
+      .usage('支持的时间段格式：Nh（N小时）、Nd（N天）、Nw（N周）、Nm（N月）、Ny（N年），或指定日期如 YYYY-MM-DD。例如：2h 表示近2小时，2d 表示近2天。')
       .action(async ({ session, options, args }) => {
+        const arg = args[0]?.toLowerCase()
+        let page = 1
+        let showAll = false
+        if (arg === 'all') {
+          showAll = true
+        } else if (arg && /^\d+$/.test(arg)) {
+          page = parseInt(arg)
+        }
         // 获取时间段参数
-        const period = args[0] || 'yesterday'
+        const period = options.date || 'yesterday'
         const queryParams: RankQueryParams = {
           period,
           platform: options.platform,
           guildId: options.guild || session?.guildId,
           sortBy: options.sort === 'name' ? 'name' : 'count',
-          page: options.page
+          page: showAll ? undefined : page
         }
         // 选择展示模式
         if (options.visual !== undefined) {
@@ -331,6 +548,14 @@ export class DailyStats {
         // 文本模式
         const result = await this.getPaginatedRank(queryParams)
         return result.items.length ? `${result.title}\n${result.items.join('\n')}` : result.title
+      })
+      // 只保留一个手动收集命令
+      .subcommand('.collect [period:string]', '手动收集指定时间段的统计数据', { authority: 4 })
+      .action(async ({ session, args }) => {
+        const period = args[0] || '1d'
+        await session.send(`正在收集${period}的统计数据...`)
+        await this.collectPeriod(period)
+        return `已完成${period}的统计数据收集`
       })
     return rank
   }
