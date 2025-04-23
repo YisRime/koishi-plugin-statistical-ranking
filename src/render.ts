@@ -268,7 +268,7 @@ export class Renderer {
             <h2 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${pageTitle}</h2>
             <div class="stat-chip" style="color:rgba(0,0,0,0.6); margin-left:12px;">${currentTime}</div>
           </div>
-          ${this.generateTableHTML(pageData, key, headerColor)}
+          ${this.generateTableHTML(pageData, key, headerColor, options.isRanking)}
         </div>
       `;
       results.push(await this.htmlToImage(html));
@@ -405,10 +405,16 @@ export class Renderer {
    * @param {Array<{name: string, value: number, time: string}>} data - 表格数据
    * @param {keyof StatRecord} key - 数据类型
    * @param {string} headerColor - 表头颜色
+   * @param {boolean} isRanking - 是否为排行榜模式
    * @returns {string} 表格HTML
    * @private
    */
-  private generateTableHTML(data: Array<{name: string, value: number, time: string}>, key: keyof StatRecord, headerColor: string = '#2196F3'): string {
+  private generateTableHTML(
+    data: Array<{name: string, value: number, time: string}>,
+    key: keyof StatRecord,
+    headerColor: string = '#2196F3',
+    isRanking: boolean = false
+  ): string {
     const totalValue = data.reduce((sum, item) => sum + item.value, 0);
     const generateRows = (items) => {
       return items.map((item, index) => {
@@ -416,12 +422,18 @@ export class Renderer {
         const percentValue = (item.value / totalValue) * 100;
         const percentText = `${percentValue.toFixed(1)}%`;
         const bgColor = index % 2 === 0 ? '#ffffff' : 'rgba(0, 0, 0, 0.01)';
+        // 排行榜模式显示排名而不是时间
+        const timeOrRankCell = isRanking
+          ? `<td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:center; font-weight:bold; color:${
+              index === 0 ? '#FFD700' : (index === 1 ? '#C0C0C0' : (index === 2 ? '#CD7F32' : '#757575'))
+            };">${index + 1}</td>`
+          : `<td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; color:rgba(0,0,0,0.6);">${item.time}</td>`;
         return `
           <tr style="background-color:${bgColor};">
             <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04);">
               ${item.name}
             </td>
-            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; color:rgba(0,0,0,0.6);">${item.time}</td>
+            ${timeOrRankCell}
             <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap;">${valueText}</td>
             <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; font-family:monospace; color:rgba(0,0,0,0.78); position:relative;">
               <div style="position:absolute; top:0; right:0; bottom:0; width:${Math.min(percentValue * 2, 100)}%; background-color:${headerColor}15; z-index:0;"></div>
@@ -431,13 +443,16 @@ export class Renderer {
         `;
       }).join('');
     };
+    const timeOrRankHeader = isRanking
+      ? `<th style="text-align:center; white-space:nowrap; padding:8px 12px;">排名</th>`
+      : `<th style="text-align:right; white-space:nowrap; padding:8px 12px;">最后时间</th>`;
     return `
       <div class="table-container">
         <table class="stat-table" style="width:100%; border-collapse:separate; border-spacing:0; background:white;">
           <thead>
             <tr style="background:${headerColor};">
               <th style="text-align:left; border-radius:6px 0 0 0; padding:8px 12px;">名称</th>
-              <th style="text-align:right; white-space:nowrap; padding:8px 12px;">最后时间</th>
+              ${timeOrRankHeader}
               <th style="text-align:right; white-space:nowrap; padding:8px 12px;">数量</th>
               <th style="text-align:right; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px;">占比</th>
             </tr>
@@ -448,96 +463,5 @@ export class Renderer {
         </table>
       </div>
     `;
-  }
-
-  /**
-   * 渲染排行榜数据为图片
-   * @param {object} data 包含排行榜数据的对象
-   * @param {Array} data.records 排行记录数组
-   * @param {number} data.totalCount 总计数
-   * @param {string} data.guildName 群组名称
-   * @param {string} data.period 时间段描述
-   * @param {string} data.startDate 开始日期
-   * @param {string} data.endDate 结束日期
-   * @returns {Promise<Buffer>} 生成的图片Buffer
-   */
-  async renderRankingData(data: {
-    records: Array<{userId: string, userName?: string, count: number}>,
-    totalCount: number,
-    guildName: string,
-    period: string,
-    startDate: string,
-    endDate: string
-  }): Promise<Buffer> {
-    const { records, totalCount, guildName, period, startDate, endDate } = data;
-    // 准备图表数据
-    const chartData = records.map(record => ({
-      name: Utils.formatDisplayName(record.userName || '', record.userId, true),
-      value: record.count
-    }));
-    // 构建标题
-    const dateRange = startDate === endDate ? period : `${startDate} 至 ${endDate}`;
-    const title = `${dateRange}${guildName ? ` ${guildName}` : ''} 发言排行`;
-    // 生成HTML并渲染图片
-    const currentTime = Utils.formatDate(new Date(), 'datetime')
-    const headerColor = '#FF9800'
-    // 生成表格行
-    const generateRows = (items) => {
-      return items.map((item, index) => {
-        const rankColor = index === 0 ? '#FFD700' : (index === 1 ? '#C0C0C0' : (index === 2 ? '#CD7F32' : '#757575'))
-        const bgColor = index % 2 === 0 ? '#ffffff' : 'rgba(0, 0, 0, 0.01)'
-        const percentValue = (item.value / totalCount) * 100
-        const percentText = `${percentValue.toFixed(1)}%`
-        return `
-          <tr style="background-color:${bgColor};">
-            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:center; font-weight:bold; color:${rankColor};">
-              ${index + 1}
-            </td>
-            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04);">
-              ${item.name}
-            </td>
-            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap;">${item.value}条</td>
-            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; font-family:monospace; color:rgba(0,0,0,0.78); position:relative;">
-              <div style="position:absolute; top:0; right:0; bottom:0; width:${Math.min(percentValue * 2, 100)}%; background-color:${headerColor}15; z-index:0;"></div>
-              <span style="position:relative; z-index:1;">${percentText}</span>
-            </td>
-          </tr>
-        `;
-      }).join('');
-    };
-    const html = `
-      <div class="material-card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
-          <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
-            <div class="stat-chip">
-              <span style="color:rgba(0,0,0,0.6);">总发言: </span>
-              <span style="font-weight:500; margin-left:3px;">${totalCount}条</span>
-            </div>
-            <div class="stat-chip">
-              <span style="color:rgba(0,0,0,0.6);">发言人: </span>
-              <span style="font-weight:500; margin-left:3px;">${chartData.length}人</span>
-            </div>
-          </div>
-          <h2 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${title}</h2>
-          <div class="stat-chip" style="color:rgba(0,0,0,0.6); margin-left:12px;">${currentTime}</div>
-        </div>
-        <div class="table-container">
-          <table class="stat-table" style="width:100%; border-collapse:separate; border-spacing:0; background:white;">
-            <thead>
-              <tr style="background:${headerColor};">
-                <th style="text-align:center; border-radius:6px 0 0 0; padding:8px 12px; color:white; font-weight:500;">排名</th>
-                <th style="text-align:left; padding:8px 12px; color:white; font-weight:500;">用户</th>
-                <th style="text-align:right; white-space:nowrap; padding:8px 12px; color:white; font-weight:500;">发言数</th>
-                <th style="text-align:right; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px; color:white; font-weight:500;">占比</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${generateRows(chartData)}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-    return await this.htmlToImage(html);
   }
 }

@@ -162,13 +162,14 @@ export async function apply(ctx: Context, config: Config = {}) {
    * 处理消息和命令记录
    * @param {Session} session - 会话对象
    * @param {string} [command] - 命令名称，为空时表示普通消息
+   * @param {number} [increment] - 计数增量，默认为1
    * @returns {Promise<void>}
    */
-  const handleRecord = async (session: any, command?: string) => {
+  const handleRecord = async (session: any, command?: string, increment: number = 1) => {
     const info = await Utils.getSessionInfo(session)
     if (!info) return
     const commandValue = command || '_message'
-    await database.saveRecord(ctx, { ...info, command: commandValue })
+    await database.saveRecord(ctx, { ...info, command: commandValue }, increment)
   }
 
   ctx.on('command/before-execute', ({session, command}) => handleRecord(session, command.name))
