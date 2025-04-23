@@ -35,19 +35,12 @@ export const database = {
     if (enableDaily) {
       // 初始化日常统计表
       ctx.model.extend('analytics.daily', {
-        id: 'unsigned',
-        platform: { type: 'string', length: 60 },
-        guildId: { type: 'string', length: 150 },
-        userId: { type: 'string', length: 150 },
-        userName: { type: 'string', nullable: true },
-        guildName: { type: 'string', nullable: true },
+        statId: 'unsigned',
         date: 'string',
         hour: { type: 'unsigned', nullable: true },
         count: 'unsigned',
       }, {
-        primary: 'id',
-        autoInc: true,
-        unique: [['platform', 'guildId', 'userId', 'date', 'hour']],
+        primary: ['statId', 'date', 'hour'],
       })
     }
   },
@@ -110,38 +103,43 @@ export const database = {
   ): Promise<{ savedCount: number }> {
     let savedCount = 0
     try {
-      // 查询已存在的记录，避免重复创建
-      const query: any = { date }
-      if (hour !== undefined && hour !== null) query.hour = hour
-      else query.hour = null
-      const existingRecords = await ctx.database.get('analytics.daily', query)
-      const existingKeys = new Set(
-        existingRecords.map(r => `${r.platform}:${r.guildId}:${r.userId}`)
-      )
       // 批量处理每条记录
       for (const record of records.values()) {
-        const key = `${record.platform}:${record.guildId}:${record.userId}`
         try {
+          // 查询对应的 stat 记录以获取 statId
+          const [statRecord] = await ctx.database.get('analytics.stat', {
+            platform: record.platform,
+            guildId: record.guildId,
+            userId: record.userId,
+            command: '_message'
+          })
+          if (!statRecord?.id) {
+            ctx.logger.warn(`未找到匹配的统计记录: ${record.platform}:${record.guildId}:${record.userId}`)
+            continue
+          }
           // 检查记录是否已存在
-          if (existingKeys.has(key)) {
+          const hourValue = hour !== undefined && hour !== null ? hour : null
+          const [existingRecord] = await ctx.database.get('analytics.daily', {
+            statId: statRecord.id,
+            date,
+            hour: hourValue
+          })
+          if (existingRecord) {
             // 更新现有记录
             await ctx.database.set('analytics.daily', {
-              platform: record.platform,
-              guildId: record.guildId,
-              userId: record.userId,
+              statId: statRecord.id,
               date,
-              hour: hour !== undefined && hour !== null ? hour : null
+              hour: hourValue
             }, {
-              count: record.count,
-              userName: record.userName,
-              guildName: record.guildName
+              count: record.count
             })
           } else {
             // 创建新记录
             await ctx.database.create('analytics.daily', {
-              ...record,
+              statId: statRecord.id,
               date,
-              hour: hour !== undefined && hour !== null ? hour : null
+              hour: hourValue,
+              count: record.count
             })
           }
           savedCount++
@@ -152,6 +150,7 @@ export const database = {
       return { savedCount }
     } catch (e) {
       ctx.logger.error('批量保存日常统计记录失败:', e)
+      return { savedCount }
     }
   },
 

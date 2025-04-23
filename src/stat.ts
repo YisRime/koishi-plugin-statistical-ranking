@@ -156,94 +156,27 @@ export const statProcessor = {
     if (options.user) query.userId = options.user
     if (options.guild) query.guildId = options.guild
     if (options.platform) query.platform = options.platform
-    if (type === 'user') query.command = '_message'
-    else if (type === 'command') query.command = options.command || { $neq: '_message' }
-    else if (options.command) query.command = options.command
+    if (source === 'stat') {
+      if (type === 'user') query.command = '_message'
+      else if (type === 'command') query.command = options.command || { $neq: '_message' }
+      else if (options.command) query.command = options.command
+    }
     let records: any[] = []
     if (source === 'daily') {
+      // 构建日期条件
       let dateCond: any = {};
       if (options.period) {
-        const p = String(options.period).toLowerCase();
-        if (/^\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}$/.test(p)) {
-          // 处理日期范围格式 (YYYY-MM-DD~YYYY-MM-DD)
-          const [start, end] = p.split('~');
-          dateCond = { $gte: start, $lte: end };
-        } else if (/^\d{4}-\d{2}-\d{2}(?:\s+\d{1,2})?$/.test(p)) {
-          // 处理单个日期格式 (YYYY-MM-DD [H])
-          const [date, hourStr] = p.split(/\s+/);
-          dateCond = date;
-          if (hourStr !== undefined) {
-            const hourNum = parseInt(hourStr);
-            if (!isNaN(hourNum)) {
-              // 指定了具体小时，直接查询该小时的数据
-              const hourQuery = { ...query, date: dateCond, hour: hourNum };
-              records = await ctx.database.get('analytics.daily', hourQuery);
-              if (records.length > 0) {
-                return { records, title: this.generateTitle(records, options, type, typeMap) };
-              }
-            }
-          }
-        } else if (/^\d+d$/.test(p)) {
-          // 处理天数格式 (Nd)
-          const days = parseInt(p);
-          const today = new Date();
-          const end = new Date(today);
-          end.setDate(today.getDate() - 1);
-          const start = new Date(end);
-          start.setDate(end.getDate() - days + 1);
-          dateCond = { $gte: Utils.formatDate(start), $lte: Utils.formatDate(end) };
-        } else if (/^\d+h$/.test(p)) {
-          // 处理小时格式 (Nh)，需要查询最近N小时的数据
-          const hours = parseInt(p);
-          const now = new Date();
-          const endDate = Utils.formatDate(now);
-          const startDate = now.getHours() >= hours ?
-            endDate :
-            Utils.formatDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
-          // 小时查询需要特殊处理，查询两天内带有小时信息的记录
-          const hourlyRecords = await ctx.database.get('analytics.daily', {
-            ...query,
-            date: { $in: [startDate, endDate] },
-            hour: { $ne: null }
-          });
-          if (hourlyRecords.length > 0) {
-            // 过滤出最近N小时的记录
-            const cutoffTime = new Date();
-            cutoffTime.setHours(cutoffTime.getHours() - hours);
-            const filteredRecords = hourlyRecords.filter(record => {
-              const recordDate = new Date(record.date);
-              recordDate.setHours(record.hour || 0);
-              return recordDate.getTime() >= cutoffTime.getTime();
-            });
-            if (filteredRecords.length > 0) {
-              return { records: filteredRecords, title: this.generateTitle(filteredRecords, options, type, typeMap) };
-            }
-          }
-        }
+        dateCond = this.buildDateCondition(options.period);
       }
-      // 先尝试查询整天数据（hour为null的记录）
-      const dailyQuery = { ...query, date: dateCond, hour: null };
-      const dailyRecords = await ctx.database.get('analytics.daily', dailyQuery);
-      // 如果找到了整天数据，使用整天数据
+      // 对于daily表的查询需要通过join方式获取完整信息
+      const dailyRecords = await this.fetchDailyRecordsWithJoin(ctx, {
+        ...query,
+        dateCond,
+        period: options.period
+      });
       if (dailyRecords.length > 0) {
-        records = dailyRecords;
-      } else {
-        // 如果没有整天数据，查询所有符合日期条件的数据（可能包含小时数据）
-        const allQuery = { ...query, date: dateCond };
-        records = await ctx.database.get('analytics.daily', allQuery);
-        // 如果同一天同时有整天数据和小时数据，按日期分组并优先使用整天数据
-        const recordsByDate = new Map();
-        records.forEach(record => {
-          const date = record.date;
-          const key = `${record.platform}:${record.guildId}:${record.userId}:${date}`;
-          const existingRecord = recordsByDate.get(key);
-          // 如果已经有记录，且当前记录hour为null，则替换为整天数据
-          // 或者如果没有现有记录，直接添加
-          if (!existingRecord || record.hour === null) {
-            recordsByDate.set(key, record);
-          }
-        });
-        records = Array.from(recordsByDate.values());
+        // 计算差值
+        records = this.processDailyRecords(dailyRecords, options.period);
       }
     } else {
       records = await ctx.database.get('analytics.stat', query);
@@ -253,6 +186,183 @@ export const statProcessor = {
       records,
       title: this.generateTitle(records, options, type, typeMap)
     };
+  },
+
+  /**
+   * 构建日期查询条件
+   */
+  buildDateCondition(period: string) {
+    const p = String(period).toLowerCase();
+    let dateCond: any = {};
+    if (/^\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}$/.test(p)) {
+      // 处理日期范围格式 (YYYY-MM-DD~YYYY-MM-DD)
+      const [start, end] = p.split('~');
+      dateCond = { $gte: start, $lte: end };
+    } else if (/^\d{4}-\d{2}-\d{2}(?:\s+\d{1,2})?$/.test(p)) {
+      // 处理单个日期格式 (YYYY-MM-DD [H])
+      const [date] = p.split(/\s+/);
+      dateCond = date;
+    } else if (/^\d+d$/.test(p)) {
+      // 处理天数格式 (Nd)
+      const days = parseInt(p);
+      const today = new Date();
+      const end = new Date(today);
+      end.setDate(today.getDate() - 1);
+      const start = new Date(end);
+      start.setDate(end.getDate() - days + 1);
+      dateCond = { $gte: Utils.formatDate(start), $lte: Utils.formatDate(end) };
+    } else if (/^\d+h$/.test(p)) {
+      // 处理小时格式 (Nh)
+      const hours = parseInt(p);
+      const now = new Date();
+      const cutoffTime = new Date(now.getTime() - hours * 60 * 60 * 1000);
+      dateCond = { $gte: Utils.formatDate(cutoffTime) };
+    }
+    return dateCond;
+  },
+
+  /**
+   * 通过关联查询获取daily记录和对应的stat信息
+   */
+  async fetchDailyRecordsWithJoin(ctx: Context, conditions: any) {
+    const { dateCond, period, ...query } = conditions;
+    // 首先找到匹配的stat记录ID
+    let statQuery: any = { command: '_message' };
+    if (query.userId) statQuery.userId = query.userId;
+    if (query.guildId) statQuery.guildId = query.guildId;
+    if (query.platform) statQuery.platform = query.platform;
+    const statRecords = await ctx.database.get('analytics.stat', statQuery);
+    if (!statRecords.length) return [];
+    // 获取小时信息，如果有的话
+    let hourFilter = null;
+    if (period && /^\d{4}-\d{2}-\d{2}\s+\d{1,2}$/.test(period)) {
+      const hourStr = period.split(/\s+/)[1];
+      hourFilter = parseInt(hourStr);
+    }
+    // 构建daily表查询
+    const dailyQuery: any = {
+      statId: { $in: statRecords.map(r => r.id) },
+      date: dateCond || {}
+    };
+    if (hourFilter !== null) {
+      dailyQuery.hour = hourFilter;
+    }
+    // 获取daily记录
+    const dailyRecords = await ctx.database.get('analytics.daily', dailyQuery);
+    // 将stat记录信息合并到daily记录中
+    return dailyRecords.map(daily => {
+      const stat = statRecords.find(s => s.id === daily.statId);
+      if (!stat) return null;
+      return {
+        ...daily,
+        platform: stat.platform,
+        guildId: stat.guildId,
+        userId: stat.userId,
+        userName: stat.userName,
+        guildName: stat.guildName
+      };
+    }).filter(Boolean);
+  },
+
+  /**
+   * 处理daily记录，计算差值
+   */
+  processDailyRecords(records: any[]) {
+    // 按日期和小时排序
+    records.sort((a, b) => {
+      const dateComp = a.date.localeCompare(b.date);
+      if (dateComp !== 0) return dateComp;
+      // 处理hour可能为null的情况
+      const aHour = a.hour === null ? -1 : a.hour;
+      const bHour = b.hour === null ? -1 : b.hour;
+      return aHour - bHour;
+    });
+    // 按用户分组
+    const userGroups = new Map();
+    records.forEach(record => {
+      const key = `${record.platform}:${record.guildId}:${record.userId}`;
+      if (!userGroups.has(key)) {
+        userGroups.set(key, []);
+      }
+      userGroups.get(key).push(record);
+    });
+    // 计算每个用户的差值
+    const processedRecords = [];
+    userGroups.forEach((userRecords) => {
+      // 如果只有一条记录，直接使用原始值
+      if (userRecords.length === 1) {
+        processedRecords.push({
+          ...userRecords[0]
+        });
+        return;
+      }
+      // 对于多条记录，计算相邻记录之间的差值
+      for (let i = 1; i < userRecords.length; i++) {
+        const current = userRecords[i];
+        const previous = userRecords[i - 1];
+        const increment = Math.max(0, current.count - previous.count);
+        if (increment > 0) {
+          processedRecords.push({
+            ...current,
+            count: increment
+          });
+        }
+      }
+      // 第一条记录也需要保留
+      processedRecords.push({
+        ...userRecords[0]
+      });
+    });
+    return processedRecords;
+  },
+
+  /**
+   * 计算两组记录之间的差值
+   * @private
+   * @param {Array<any>} currentRecords - 当前记录
+   * @param {Array<any>} baseRecords - 基准记录
+   * @returns {Array<any>} 计算差值后的记录
+   */
+  calculateDifferences(currentRecords: any[], baseRecords: any[] = []): any[] {
+    if (!baseRecords?.length) return currentRecords;
+    // 创建基准记录的映射表以便快速查找
+    const baseMap = new Map();
+    baseRecords.forEach(record => {
+      const key = `${record.platform}:${record.guildId}:${record.userId}`;
+      baseMap.set(key, record);
+    });
+    // 计算差值
+    return currentRecords.map(record => {
+      const key = `${record.platform}:${record.guildId}:${record.userId}`;
+      const baseRecord = baseMap.get(key);
+      // 计算实际增量
+      const baseCount = baseRecord ? baseRecord.count : 0;
+      const increment = Math.max(0, record.count - baseCount);
+      // 返回一个新对象，包含原始属性但count已更新为增量值
+      return {
+        ...record,
+        count: increment
+      };
+    }).filter(record => record.count > 0);
+  },
+
+  /**
+   * 获取记录中的最早日期
+   * @private
+   * @param {Array<any>} records - 记录数组
+   * @returns {Date|null} 最早的日期，如果没有记录则返回null
+   */
+  getEarliestDate(records: any[]): Date | null {
+    if (!records?.length) return null;
+    let earliest: Date | null = null;
+    records.forEach(record => {
+      if (!record.date) return;
+      const recordDate = new Date(record.date);
+      if (!earliest || recordDate < earliest) {
+        earliest = recordDate;
+      }
+    });
+    return earliest;
   },
 
   /**

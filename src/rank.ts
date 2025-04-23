@@ -7,7 +7,6 @@ import { statProcessor } from './stat'
  * 日常发言记录数据结构
  */
 export interface DailyRecord {
-  id?: number
   platform: string
   guildId: string
   userId: string
@@ -16,6 +15,7 @@ export interface DailyRecord {
   date: string
   hour?: number
   count: number
+  statId?: number
 }
 
 /**
@@ -100,6 +100,7 @@ export class DailyStats {
 
   /**
    * 收集统计数据的通用方法
+   * 直接保存当前count值
    */
   async collectStatistics(options: {
     dateStr?: string,
@@ -111,36 +112,23 @@ export class DailyStats {
       const now = new Date();
       const dateStr = options.dateStr || Utils.formatDate(now);
       const hour = options.isDaily ? null : (options.hour ?? now.getHours());
-      // 检查是否已有记录
-      const existingRecords = await this.ctx.database.get('analytics.daily', { date: dateStr, hour });
-      if (existingRecords.length > 0) return { success: true, count: 0 };
       // 获取所有消息记录
       const currentRecords = await this.ctx.database.get('analytics.stat', { command: '_message' });
-      // 获取比较数据
-      const [previousMap, oldDataMap] = await this.getPreviousData(dateStr, hour, options.isDaily);
       // 生成统计数据
       const dailyData = new Map<string, DailyRecord>();
       for (const record of currentRecords) {
         if (!this.isValidRecord(record)) continue;
         const key = `${record.platform}:${record.guildId}:${record.userId}`;
-        const prevRecord = previousMap.get(key);
-        const oldData = oldDataMap.get(key);
-        // 计算增量
-        const increment = prevRecord
-          ? Math.max(0, record.count - prevRecord.count)
-          : (oldData?.count || record.count);
-        if (increment > 0) {
-          dailyData.set(key, {
-            platform: record.platform,
-            guildId: record.guildId,
-            userId: record.userId,
-            userName: record.userName || oldData?.userName,
-            guildName: record.guildName || oldData?.guildName,
-            date: dateStr,
-            ...(hour !== null && { hour }),
-            count: increment
-          });
-        }
+        dailyData.set(key, {
+          platform: record.platform,
+          guildId: record.guildId,
+          userId: record.userId,
+          userName: record.userName,
+          guildName: record.guildName,
+          date: dateStr,
+          ...(hour !== null && { hour }),
+          count: record.count
+        });
       }
       // 保存结果
       if (dailyData.size > 0) {
@@ -152,51 +140,6 @@ export class DailyStats {
       this.ctx.logger.error('收集统计数据失败:', error);
       return { success: false, error };
     }
-  }
-
-  /**
-   * 获取比较数据
-   */
-  private async getPreviousData(dateStr: string, hour: number | null, isDaily?: boolean) {
-    const previousMap = new Map();
-    const oldDataMap = new Map();
-    if (isDaily) {
-      // 获取前一天的daily记录和当天的stat记录
-      const prevDate = new Date(dateStr);
-      prevDate.setDate(prevDate.getDate() - 1);
-      const prevDateStr = Utils.formatDate(prevDate);
-      const [prevData, oldDayData] = await Promise.all([
-        this.ctx.database.get('analytics.daily', { date: prevDateStr }),
-        this.ctx.database.get('analytics.stat', {
-          command: '_message',
-          lastTime: {
-            $gte: new Date(`${dateStr}T00:00:00`),
-            $lte: new Date(`${dateStr}T23:59:59`)
-          }
-        }).catch(() => [])
-      ]);
-      prevData.forEach(r => previousMap.set(`${r.platform}:${r.guildId}:${r.userId}`, r));
-      oldDayData
-        .filter(r => this.isValidRecord(r))
-        .forEach(r => oldDataMap.set(
-          `${r.platform}:${r.guildId}:${r.userId}`,
-          { count: r.count || 1, userName: r.userName, guildName: r.guildName }
-        ));
-    } else if (hour !== null) {
-      // 获取上一个小时的记录
-      let prevHour = hour - 1;
-      let prevDate = new Date(dateStr);
-      if (prevHour < 0) {
-        prevHour = 23;
-        prevDate.setDate(prevDate.getDate() - 1);
-      }
-      const prevRecords = await this.ctx.database.get('analytics.daily', {
-        date: Utils.formatDate(prevDate),
-        hour: prevHour
-      });
-      prevRecords.forEach(r => previousMap.set(`${r.platform}:${r.guildId}:${r.userId}`, r));
-    }
-    return [previousMap, oldDataMap];
   }
 
   /**
