@@ -264,7 +264,7 @@ export class DailyStats {
         const queryOptions = {
           platform: options.platform,
           guild: options.guild || session?.guildId,
-          period: options.date,
+          period: options.date || '1d',
           source: 'daily' as 'daily',
           isRanking: true
         };
@@ -307,19 +307,23 @@ export class DailyStats {
           const renderSuccess = await Utils.tryRenderImage(
             session,
             this.ctx,
-            (renderer) => renderer.generateStatImage(
-              result.records,
-              'userId',
-              result.title.replace(' ——', ''),
-              {
-                sortBy,
-                truncateId: true,
-                source: 'daily',
-                period: queryOptions.period,
-                limit: showAll ? undefined : 15,
-                isRanking: true
-              }
-            ),
+            async (renderer) => {
+              return renderer.generateStatImage(
+                result.records,
+                'userId',
+                // 移除标题中的后缀，使其更适合显示在图片中
+                result.title.replace(' ——', ''),
+                {
+                  sortBy,
+                  truncateId: true,
+                  // 确保传递排行榜需要的特殊参数
+                  source: 'daily',
+                  period: queryOptions.period,
+                  limit: showAll ? undefined : 15,
+                  isRanking: true
+                }
+              );
+            },
             () => textResult
           );
           if (renderSuccess) return;

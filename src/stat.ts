@@ -560,10 +560,10 @@ export const statProcessor = {
       const guildRecord = records.find(r => r.guildId === options.guild && r.guildName);
       guildName = guildRecord?.guildName || '';
     }
-    // 构建基本条件
+    // 构建条件描述信息
     const conditions = Utils.buildConditions({
       user: options.user ? (userName || options.user) : null,
-      guild: options.guild ? (guildName || options.guild) : null,
+      guild: options.guild ? (guildName || `群组${options.guild}`) : null,
       platform: options.platform,
       command: options.command
     });
@@ -572,7 +572,7 @@ export const statProcessor = {
     if (conditions.length) {
       title = `${conditions.join('、')}的${typeMap[type]}统计`;
     } else if (options.guild && type !== 'guild') {
-      const guildDisplay = guildName || options.guild;
+      const guildDisplay = guildName || `群组${options.guild}`;
       title = `${guildDisplay}的${typeMap[type]}统计`;
     } else {
       title = `全局${typeMap[type]}统计`;

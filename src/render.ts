@@ -166,12 +166,16 @@ export class Renderer {
       disableCommandMerge = false,
       truncateId = false,
       displayBlacklist = [],
-      displayWhitelist = []
+      displayWhitelist = [],
+      source
     } = options;
+    // 如果是每日统计数据（source=daily），则不需要过滤黑名单
+    const useBlacklist = source !== 'daily' ? displayBlacklist : [];
+    const useWhitelist = source !== 'daily' ? displayWhitelist : [];
     const filteredRecords = Utils.filterStatRecords(records, {
       keyField: key as string,
-      displayWhitelist,
-      displayBlacklist,
+      displayWhitelist: useWhitelist,
+      displayBlacklist: useBlacklist,
       disableCommandMerge
     });
     const keyFormatter = (key === 'command' && !disableCommandMerge)
@@ -249,9 +253,19 @@ export class Renderer {
     const currentTime = Utils.formatDate(new Date(), 'datetime');
     const totalItems = chartData.length;
     const totalCount = chartData.reduce((sum, item) => sum + item.value, 0);
+    // 添加排行榜额外信息
+    const isPeriodRanking = options.isRanking && options.period;
+    let periodInfo = '';
+    if (isPeriodRanking) {
+      const periodData = options.period.match(/^\d+[dh]$/) ?
+        `近${options.period}` : options.period;
+      periodInfo = ` (${periodData})`;
+    }
     for (let i = 0; i < pages.length; i++) {
       const pageData = pages[i];
-      const pageTitle = pages.length > 1 ? `${title} (${i+1}/${pages.length})` : title;
+      const pageTitle = pages.length > 1 ?
+        `${title}${periodInfo} (${i+1}/${pages.length})` :
+        `${title}${periodInfo}`;
       const html = `
         <div class="material-card">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
