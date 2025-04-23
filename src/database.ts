@@ -42,11 +42,12 @@ export const database = {
         userName: { type: 'string', nullable: true },
         guildName: { type: 'string', nullable: true },
         date: 'string',
+        hour: { type: 'unsigned', nullable: true },
         count: 'unsigned',
       }, {
         primary: 'id',
         autoInc: true,
-        unique: [['platform', 'guildId', 'userId', 'date']],
+        unique: [['platform', 'guildId', 'userId', 'date', 'hour']],
       })
     }
   },
@@ -98,17 +99,22 @@ export const database = {
    * @param ctx - Koishi 上下文
    * @param records - 日常统计记录数组
    * @param date - 日期字符串 (YYYY-MM-DD)
+   * @param hour - 小时数（可选）
    * @returns {Promise<{ savedCount: number }>} 保存的记录数
    */
   async saveDailyRecords(
     ctx: Context,
     records: Map<string, DailyRecord>,
-    date: string
+    date: string,
+    hour?: number | null
   ): Promise<{ savedCount: number }> {
     let savedCount = 0
     try {
       // 查询已存在的记录，避免重复创建
-      const existingRecords = await ctx.database.get('analytics.daily', { date })
+      const query: any = { date }
+      if (hour !== undefined && hour !== null) query.hour = hour
+      else query.hour = null
+      const existingRecords = await ctx.database.get('analytics.daily', query)
       const existingKeys = new Set(
         existingRecords.map(r => `${r.platform}:${r.guildId}:${r.userId}`)
       )
@@ -123,7 +129,8 @@ export const database = {
               platform: record.platform,
               guildId: record.guildId,
               userId: record.userId,
-              date
+              date,
+              hour: hour !== undefined && hour !== null ? hour : null
             }, {
               count: record.count,
               userName: record.userName,
@@ -131,7 +138,11 @@ export const database = {
             })
           } else {
             // 创建新记录
-            await ctx.database.create('analytics.daily', record)
+            await ctx.database.create('analytics.daily', {
+              ...record,
+              date,
+              hour: hour !== undefined && hour !== null ? hour : null
+            })
           }
           savedCount++
         } catch (err) {

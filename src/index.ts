@@ -33,7 +33,7 @@ export const usage = `
  * @property {boolean} [silentMode] - 是否启用静默模式
  * @property {string[]} [allowedGuilds] - 静默模式下允许响应的群组列表
  * @property {boolean} [enableRank] - 是否启用每日排行
- * @property {string} [cronTime] - 自动更新CRON表达式
+ * @property {string[]} [updateInterval] - 自动更新频率
  */
 export interface Config {
   enableDataTransfer?: boolean
@@ -43,7 +43,7 @@ export interface Config {
   silentMode?: boolean
   allowedGuilds?: string[]
   enableRank?: boolean
-  cronTime?: string
+  updateInterval?: '1h' | '6h' | '12h' | '1d'
 }
 
 /**
@@ -51,16 +51,21 @@ export interface Config {
  */
 export const Config = Schema.intersect([
   Schema.object({
-    enableRank: Schema.boolean().description('启用每日排行').default(false),
     enableDataTransfer: Schema.boolean().description('启用导入导出').default(true),
     defaultImageMode: Schema.boolean().description('默认以图片输出').default(false),
     silentMode: Schema.boolean().description('静默模式').default(false),
+    enableRank: Schema.boolean().description('启用发言排行').default(false),
+    updateInterval: Schema.union([
+      Schema.const('1h').description('每小时'),
+      Schema.const('6h').description('每6小时'),
+      Schema.const('12h').description('每12小时'),
+      Schema.const('1d').description('每24小时')
+    ]).description('发言排行更新频率').default('1d'),
     displayWhitelist: Schema.array(Schema.string())
       .description('显示白名单：仅展示以下记录（优先级高于黑名单）').default([]),
     displayBlacklist: Schema.array(Schema.string())
       .description('显示黑名单：不默认展示以下记录').default([ 'qq:1234:5678', '.message' ]),
     allowedGuilds: Schema.array(Schema.string()).description('静默模式白名单群组ID').default([]),
-    cronTime: Schema.string().description('自动更新CRON表达式（如 0 0 0 * * *，默认每天0点）').default('0 0 0 * * *'),
     }).description('统计配置'),
 ])
 
@@ -148,7 +153,7 @@ export async function apply(ctx: Context, config: Config = {}) {
     silentMode: false,
     allowedGuilds: [],
     enableRank: true,
-    cronTime: '0 0 0 * * *',
+    updateInterval: '1d',
     ...config
   }
   database.initialize(ctx, config.enableRank)
@@ -529,7 +534,7 @@ export async function apply(ctx: Context, config: Config = {}) {
   const commands = [stat, commandStat, userStat, guildStat]
 
   if (config.enableRank) {
-    const dailyStats = new DailyStats(ctx, typeof ctx.cron === 'function', config.cronTime)
+    const dailyStats = new DailyStats(ctx, typeof ctx.cron === 'function', config.updateInterval)
     commands.push(dailyStats.registerCommands(stat))
   }
 

@@ -470,11 +470,6 @@ export class Renderer {
     endDate: string
   }): Promise<Buffer> {
     const { records, totalCount, guildName, period, startDate, endDate } = data;
-    if (!records.length) {
-      return await this.htmlToImage(
-        `<div style="padding:24px; text-align:center; font-family:sans-serif;"><h2>${period} 暂无发言记录</h2></div>`
-      );
-    }
     // 准备图表数据
     const chartData = records.map(record => ({
       name: Utils.formatDisplayName(record.userName || '', record.userId, true),
