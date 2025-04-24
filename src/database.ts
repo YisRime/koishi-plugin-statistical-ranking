@@ -1,19 +1,19 @@
 import { Context } from 'koishi'
 import { StatRecord } from './index'
 import { Utils } from './utils'
-import { DailyRecord } from './rank'
 
 /**
  * @internal
  * 数据库操作相关函数集合
+ * @description 提供数据库初始化、记录保存等核心功能
  */
 export const database = {
   /**
-   * 初始化数据库模型
-   * @param ctx Koishi 上下文对象
-   * @param enableDaily 是否启用每日统计功能，默认为 false
+   * 初始化数据库表结构
+   * @param ctx - Koishi 上下文
+   * @description 创建并定义 analytics.stat 表的结构
    */
-  initialize(ctx: Context, enableDaily: boolean = false) {
+  initialize(ctx: Context) {
     ctx.model.extend('analytics.stat', {
       id: 'unsigned',
       platform: { type: 'string', length: 60 },
@@ -29,27 +29,16 @@ export const database = {
       autoInc: true,
       unique: [['platform', 'guildId', 'userId', 'command']],
     })
-    if (enableDaily) {
-      ctx.model.extend('analytics.daily', {
-        statId: 'unsigned',
-        date: 'string',
-        hour: { type: 'unsigned', nullable: true },
-        count: 'unsigned',
-      }, {
-        primary: ['statId', 'date', 'hour'],
-      })
-    }
   },
 
   /**
-   * 保存统计记录到数据库
-   * @param ctx Koishi 上下文对象
-   * @param data 需要保存的统计记录数据
-   * @param increment 增量值，默认为 1
-   * @returns Promise<void>
+   * 保存统计记录
+   * @param ctx - Koishi 上下文
+   * @param data - 需要保存的记录数据
+   * @description 更新或插入统计记录
    */
-  async saveRecord(ctx: Context, data: Partial<StatRecord>, increment: number = 1) {
-    if (!data.command) data.command = '_message';
+  async saveRecord(ctx: Context, data: Partial<StatRecord>) {
+    data.command ||= '_message'
     if (data.guildId?.includes('private')) return;
     try {
       const query = {
@@ -57,92 +46,37 @@ export const database = {
         guildId: data.guildId,
         userId: data.userId,
         command: data.command
-      };
-      const normalized = Utils.normalizeRecord(data, { sanitizeNames: true });
-      const [existing] = await ctx.database.get('analytics.stat', query);
+      }
+      const normalizedData = Utils.normalizeRecord(data, { sanitizeNames: true });
+      const userName = normalizedData.userName;
+      const guildName = normalizedData.guildName;
+      const [existing] = await ctx.database.get('analytics.stat', query)
       if (existing) {
-        // 只更新有变化的部分
-        const needUpdate = increment > 0 ||
-          normalized.userName !== existing.userName ||
-          normalized.guildName !== existing.guildName;
-        if (needUpdate) {
-          const updateData: Partial<StatRecord> = { lastTime: new Date() };
-          if (increment > 0) updateData.count = existing.count + increment;
-          if (normalized.userName !== existing.userName) updateData.userName = normalized.userName;
-          if (normalized.guildName !== existing.guildName) updateData.guildName = normalized.guildName;
-          await ctx.database.set('analytics.stat', query, updateData);
+        const updateData: Partial<StatRecord> = {
+          count: existing.count + 1,
+          lastTime: new Date()
         }
+        if (userName !== undefined) updateData.userName = userName
+        if (guildName !== undefined) updateData.guildName = guildName
+        await ctx.database.set('analytics.stat', query, updateData)
       } else {
         await ctx.database.create('analytics.stat', {
           ...query,
-          userName: normalized.userName,
-          guildName: normalized.guildName,
-          count: Math.max(1, increment),
+          userName,
+          guildName,
+          count: 1,
           lastTime: new Date()
-        });
+        })
       }
     } catch (e) {
-      ctx.logger.error('保存记录失败:', e, data);
+      ctx.logger.error('保存记录失败:', e, data)
     }
   },
 
   /**
-   * 保存每日统计记录到数据库
-   * @param ctx Koishi 上下文对象
-   * @param records 每日记录 Map 集合
-   * @param date 日期字符串，格式 'YYYY-MM-DD'
-   * @param hour 小时数（可选），用于按小时统计
-   * @returns Promise 包含保存成功的记录数量
-   */
-  async saveDailyRecords(
-    ctx: Context,
-    records: Map<string, DailyRecord>,
-    date: string,
-    hour?: number | null
-  ): Promise<{ savedCount: number }> {
-    let savedCount = 0;
-    const hourValue = hour !== undefined && hour !== null ? hour : null;
-    try {
-      for (const record of records.values()) {
-        const [statRecord] = await ctx.database.get('analytics.stat', {
-          platform: record.platform,
-          guildId: record.guildId,
-          userId: record.userId,
-          command: '_message'
-        }).catch(() => [null]);
-        if (!statRecord?.id) {
-          ctx.logger.warn(`未找到匹配的统计记录: ${record.platform}:${record.guildId}:${record.userId}`);
-          continue;
-        }
-        const query = {
-          statId: statRecord.id,
-          date,
-          hour: hourValue
-        };
-        const [existing] = await ctx.database.get('analytics.daily', query).catch(() => [null]);
-        if (!existing || record.count > existing.count) {
-          if (existing) {
-            await ctx.database.set('analytics.daily', query, { count: record.count });
-          } else {
-            await ctx.database.create('analytics.daily', {
-              ...query,
-              count: record.count
-            });
-          }
-          savedCount++;
-        }
-      }
-    } catch (e) {
-      ctx.logger.error('批量保存日常统计记录失败:', e);
-    }
-    return { savedCount };
-  },
-
-  /**
-   * 注册清除统计数据的命令
-   * @param ctx Koishi 上下文对象
-   * @param parent 父命令对象，用于挂载子命令
-   * @returns void
+   * 注册清除命令
+   * @param {Context} ctx Koishi 上下文
+   * @param {any} parent 父命令对象
    */
   registerClearCommand(ctx: Context, parent: any) {
     parent.subcommand('.clear', '清除统计数据', { authority: 4 })
@@ -153,53 +87,69 @@ export const database = {
       .option('below', '-b [count:number] 少于指定次数', { fallback: 0 })
       .option('time', '-t [days:number] 指定天数之前', { fallback: 0 })
       .action(async ({ options }) => {
-        // 无条件全部清除
-        if (!options.below && !options.time &&
-            !options.user && !options.platform &&
-            !options.guild && !options.command) {
-          await ctx.database.drop('analytics.stat');
-          await this.initialize(ctx);
-          return '已删除所有统计记录';
+        // 转换选项键名以匹配数据库字段名
+        const cleanOptions = {
+          userId: options.user,
+          platform: options.platform,
+          guildId: options.guild,
+          command: options.command
+        }
+        // 检查是否没有指定任何条件
+        if (!options.below && !options.time && !Object.values(cleanOptions).some(Boolean)) {
+          ctx.logger.info('正在删除所有统计记录并重建数据表...')
+          await ctx.database.drop('analytics.stat')
+          await this.initialize(ctx)
+          ctx.logger.info('已删除所有统计记录')
+          return '已删除所有统计记录'
+        }
+        // 在删除前查询以获取用户和群组的昵称
+        let userName = '', guildName = ''
+        if (options.user) {
+          const userRecords = await ctx.database.get('analytics.stat', { userId: options.user })
+          const userRecord = userRecords.find(r => r.userName)
+          userName = userRecord?.userName || ''
+        }
+        if (options.guild) {
+          const guildRecords = await ctx.database.get('analytics.stat', { guildId: options.guild })
+          const guildRecord = guildRecords.find(r => r.guildName)
+          guildName = guildRecord?.guildName || ''
         }
         // 构建查询条件
-        const query: any = {};
-        if (options.user) query.userId = options.user;
-        if (options.platform) query.platform = options.platform;
-        if (options.guild) query.guildId = options.guild;
-        if (options.command) query.command = options.command;
-        if (options.below > 0) query.count = { $lt: options.below };
+        const query: any = Object.fromEntries(
+          Object.entries(cleanOptions).filter(([_, value]) => Boolean(value))
+        );
+        // 添加记录数阈值条件
+        if (options.below > 0) { query.count = { $lt: options.below } }
+        // 添加时间阈值条件
         if (options.time > 0) {
           const cutoffDate = new Date();
           cutoffDate.setDate(cutoffDate.getDate() - options.time);
           query.lastTime = { $lt: cutoffDate };
         }
-        // 获取名称信息
-        let userName = '', guildName = '';
-        if (options.user) {
-          const [userRecord] = await ctx.database.get('analytics.stat', { userId: options.user }, ['userName']);
-          userName = userRecord?.userName || '';
-        }
-        if (options.guild) {
-          const [guildRecord] = await ctx.database.get('analytics.stat', { guildId: options.guild }, ['guildName']);
-          guildName = guildRecord?.guildName || '';
-        }
+        // 统计将要删除的记录数
+        const recordsToDelete = await ctx.database.get('analytics.stat', query, ['id'])
+        const deleteCount = recordsToDelete.length
         // 执行删除操作
-        const recordsToDelete = await ctx.database.get('analytics.stat', query, ['id']);
-        await ctx.database.remove('analytics.stat', query);
-        // 构建返回消息
+        await ctx.database.remove('analytics.stat', query)
+        // 构建条件描述
         const conditions = Utils.buildConditions({
           user: options.user ? (userName || options.user) : null,
           guild: options.guild ? (guildName || options.guild) : null,
           platform: options.platform,
           command: options.command
-        });
-        const thresholds = [
+        })
+        const thresholdConditions = [
           options.below > 0 && `少于${options.below}次`,
           options.time > 0 && `在${options.time}天前`
         ].filter(Boolean);
-        return `已删除${conditions.length ? conditions.join('、') + '的' : '所有'}${
-          thresholds.length ? thresholds.join('且') + '的' : ''
-        }统计记录（共${recordsToDelete.length}条）`;
+        // 组装最终消息
+        let message = '已删除';
+        message += conditions.length ? `${conditions.join('、')}的` : '所有';
+        if (thresholdConditions.length) {
+          message += `${thresholdConditions.join('且')}的`;
+        }
+        message += `统计记录（共${deleteCount}条）`;
+        return message;
       })
   }
 }

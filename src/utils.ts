@@ -1,7 +1,5 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { Context, Session, h } from 'koishi'
-import { Renderer } from './render'
 
 /**
  * 通用工具函数集合
@@ -48,7 +46,7 @@ export const Utils = {
       // 移除控制字符和零宽字符
       .replace(/[\x00-\x1F\x7F\u200B-\u200F\u2028-\u202F\uFEFF]/g, '')
       // 简化连续重复的字符
-      .replace(/(.)\1{3,}/g, '$1$1$1$1$1…')
+      .replace(/(.)\1{5,}/g, '$1$1$1…')
       // 替换可能导致数据库问题的字符
       .replace(/[<>`$()[\]{};'"\\\=]/g, '')
       .replace(/\s+/g, ' ').trim()
@@ -92,24 +90,17 @@ export const Utils = {
   },
 
   /**
-   * 格式化日期和时间
+   * 格式化日期时间为年月日和24小时制
    * @param {Date} date - 日期对象
-   * @param {'date'|'datetime'|'time'} format - 格式化类型
-   * @returns {string} 格式化的日期/时间字符串
+   * @returns {string} 格式化后的日期时间字符串
    */
-  formatDate(date: Date, format: 'date' | 'datetime' | 'time' = 'date'): string {
+  formatDateTime(date: Date): string {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
-    if (format === 'date') {
-      return `${year}-${month}-${day}`;
-    }
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
-    if (format === 'time') {
-      return `${hours}:${minutes}:${seconds}`;
-    }
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   },
 
@@ -337,42 +328,5 @@ export const Utils = {
     if (!cleanName || /^[\s*□]+$/.test(cleanName)) return id || '';
     if (truncateId || cleanName === id || cleanName.includes(id)) return cleanName
     return `${cleanName} (${id})`;
-  },
-
-  /**
-   * 尝试渲染图片并发送
-   * @param {Session} session - 会话对象
-   * @param {Context} ctx - Koishi上下文
-   * @param {Function} renderFn - 渲染函数，接收Renderer实例作为参数，返回Promise<Buffer|Buffer[]>
-   * @param {Function} [fallbackFn] - 渲染失败时的回退函数，返回文本内容
-   * @returns {Promise<boolean>} 渲染是否成功
-   */
-  async tryRenderImage(
-    session: Session<never, never>,
-    ctx: Context,
-    renderFn: (renderer: Renderer) => Promise<Buffer | Buffer[]>,
-    fallbackFn?: () => Promise<string> | string
-  ): Promise<boolean> {
-    if (!ctx.puppeteer) {
-      if (fallbackFn) await session.send(await fallbackFn());
-      return false;
-    }
-    try {
-      const renderer = new Renderer(ctx);
-      const result = await renderFn(renderer);
-      if (Array.isArray(result)) {
-        for (const buffer of result) {
-          await session.send(h.image(buffer, 'image/png'));
-        }
-      } else {
-        await session.send(h.image(result, 'image/png'));
-      }
-      return true;
-    } catch (e) {
-      ctx.logger.error('图片渲染失败', e);
-      await session.send(`图片渲染失败: ${e.message || '未知错误'}`);
-      if (fallbackFn) await session.send(await fallbackFn());
-      return false;
-    }
   }
 }

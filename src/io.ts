@@ -65,7 +65,7 @@ export const io = {
    * @param {Context} ctx Koishi 上下文
    * @returns {Promise<{files: string[], fileInfo: Record<string, any>}>} 文件列表和详细信息
    */
-  async listImportFiles() {
+  async listImportFiles(ctx: Context) {
     const statDir = Utils.getDataDirectory()
     const files = await fs.promises.readdir(statDir)
     const statFiles = files.filter(file =>
@@ -214,9 +214,7 @@ export const io = {
    * @throws {Error} 导入失败时抛出错误
    */
   async importLegacyData(ctx: Context, overwrite = false) {
-    if (!ctx.database.tables['analytics.command']) {
-      throw new Error('无历史数据表，请安装 analytics 插件')
-    }
+    if (!ctx.database.tables['analytics.command']) {throw new Error('无历史数据表')}
     const [records, bindings] = await Promise.all([
       ctx.database.get('analytics.command', {}),
       ctx.database.get('binding', {})

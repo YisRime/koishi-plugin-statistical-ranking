@@ -166,16 +166,12 @@ export class Renderer {
       disableCommandMerge = false,
       truncateId = false,
       displayBlacklist = [],
-      displayWhitelist = [],
-      source
+      displayWhitelist = []
     } = options;
-    // 如果是每日统计数据（source=daily），则不需要过滤黑名单
-    const useBlacklist = source !== 'daily' ? displayBlacklist : [];
-    const useWhitelist = source !== 'daily' ? displayWhitelist : [];
     const filteredRecords = Utils.filterStatRecords(records, {
       keyField: key as string,
-      displayWhitelist: useWhitelist,
-      displayBlacklist: useBlacklist,
+      displayWhitelist,
+      displayBlacklist,
       disableCommandMerge
     });
     const keyFormatter = (key === 'command' && !disableCommandMerge)
@@ -250,22 +246,12 @@ export class Renderer {
       '#2196F3';
     const pages = this.paginateData(chartData);
     const results: Buffer[] = [];
-    const currentTime = Utils.formatDate(new Date(), 'datetime');
+    const currentTime = Utils.formatDateTime(new Date());
     const totalItems = chartData.length;
     const totalCount = chartData.reduce((sum, item) => sum + item.value, 0);
-    // 添加排行榜额外信息
-    const isPeriodRanking = options.isRanking && options.period;
-    let periodInfo = '';
-    if (isPeriodRanking) {
-      const periodData = options.period.match(/^\d+[dh]$/) ?
-        `近${options.period}` : options.period;
-      periodInfo = ` (${periodData})`;
-    }
     for (let i = 0; i < pages.length; i++) {
       const pageData = pages[i];
-      const pageTitle = pages.length > 1 ?
-        `${title}${periodInfo} (${i+1}/${pages.length})` :
-        `${title}${periodInfo}`;
+      const pageTitle = pages.length > 1 ? `${title} (${i+1}/${pages.length})` : title;
       const html = `
         <div class="material-card">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
@@ -282,7 +268,7 @@ export class Renderer {
             <h2 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${pageTitle}</h2>
             <div class="stat-chip" style="color:rgba(0,0,0,0.6); margin-left:12px;">${currentTime}</div>
           </div>
-          ${this.generateTableHTML(pageData, key, headerColor, options.isRanking)}
+          ${this.generateTableHTML(pageData, key, headerColor)}
         </div>
       `;
       results.push(await this.htmlToImage(html));
@@ -314,7 +300,7 @@ export class Renderer {
     if (processedDatasets.length === 0)
       return [await this.htmlToImage(`<div style="padding:24px; text-align:center;">没有数据</div>`)];
     let totalRows = processedDatasets.reduce((sum, dataset) => sum + dataset.chartData.length, 0);
-    const currentTime = Utils.formatDate(new Date(), 'datetime');
+    const currentTime = Utils.formatDateTime(new Date());
     // 少于200行，一页显示所有内容
     if (totalRows <= 200) {
       const tablesHTML = processedDatasets.map((dataset, index) => {
@@ -419,16 +405,10 @@ export class Renderer {
    * @param {Array<{name: string, value: number, time: string}>} data - 表格数据
    * @param {keyof StatRecord} key - 数据类型
    * @param {string} headerColor - 表头颜色
-   * @param {boolean} isRanking - 是否为排行榜模式
    * @returns {string} 表格HTML
    * @private
    */
-  private generateTableHTML(
-    data: Array<{name: string, value: number, time: string}>,
-    key: keyof StatRecord,
-    headerColor: string = '#2196F3',
-    isRanking: boolean = false
-  ): string {
+  private generateTableHTML(data: Array<{name: string, value: number, time: string}>, key: keyof StatRecord, headerColor: string = '#2196F3'): string {
     const totalValue = data.reduce((sum, item) => sum + item.value, 0);
     const generateRows = (items) => {
       return items.map((item, index) => {
@@ -436,18 +416,12 @@ export class Renderer {
         const percentValue = (item.value / totalValue) * 100;
         const percentText = `${percentValue.toFixed(1)}%`;
         const bgColor = index % 2 === 0 ? '#ffffff' : 'rgba(0, 0, 0, 0.01)';
-        // 排行榜模式显示排名而不是时间
-        const timeOrRankCell = isRanking
-          ? `<td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:center; font-weight:bold; color:${
-              index === 0 ? '#FFD700' : (index === 1 ? '#C0C0C0' : (index === 2 ? '#CD7F32' : '#757575'))
-            };">${index + 1}</td>`
-          : `<td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; color:rgba(0,0,0,0.6);">${item.time}</td>`;
         return `
           <tr style="background-color:${bgColor};">
             <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04);">
               ${item.name}
             </td>
-            ${timeOrRankCell}
+            <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; color:rgba(0,0,0,0.6);">${item.time}</td>
             <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap;">${valueText}</td>
             <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap; font-family:monospace; color:rgba(0,0,0,0.78); position:relative;">
               <div style="position:absolute; top:0; right:0; bottom:0; width:${Math.min(percentValue * 2, 100)}%; background-color:${headerColor}15; z-index:0;"></div>
@@ -457,16 +431,13 @@ export class Renderer {
         `;
       }).join('');
     };
-    const timeOrRankHeader = isRanking
-      ? `<th style="text-align:center; white-space:nowrap; padding:8px 12px;">排名</th>`
-      : `<th style="text-align:right; white-space:nowrap; padding:8px 12px;">最后时间</th>`;
     return `
       <div class="table-container">
         <table class="stat-table" style="width:100%; border-collapse:separate; border-spacing:0; background:white;">
           <thead>
             <tr style="background:${headerColor};">
               <th style="text-align:left; border-radius:6px 0 0 0; padding:8px 12px;">名称</th>
-              ${timeOrRankHeader}
+              <th style="text-align:right; white-space:nowrap; padding:8px 12px;">最后时间</th>
               <th style="text-align:right; white-space:nowrap; padding:8px 12px;">数量</th>
               <th style="text-align:right; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px;">占比</th>
             </tr>
