@@ -28,6 +28,19 @@ interface RankDiff {
 }
 
 /**
+ * 排行榜配置接口
+ * @interface RankConfig
+ */
+interface RankConfig {
+  /** 更新间隔: 'hourly'(每小时), '6h'(每6小时), '12h'(每12小时), 'daily'(每天零点, 默认) */
+  updateInterval?: string
+  /** 不显示在排行榜中的用户ID列表 */
+  displayBlacklist?: string[]
+  /** 仅显示在排行榜中的用户ID列表，优先级高于黑名单 */
+  displayWhitelist?: string[]
+}
+
+/**
  * 排行榜管理器类，负责生成和查询用户排名数据
  */
 export class RankManager {
@@ -41,14 +54,22 @@ export class RankManager {
   /**
    * 构造一个排行榜管理器实例
    * @param ctx Koishi上下文
-   * @param config 配置对象
+   * @param config 排行榜配置
    */
-  constructor(ctx: Context, config: any) {
+  constructor(ctx: Context, config: RankConfig = {}) {
     this.ctx = ctx
+
+    const updateFrequencyMap = {
+      'hourly': '0 * * * *',      // 每小时整点
+      '6h': '0 */6 * * *',        // 每6小时
+      '12h': '0 */12 * * *',      // 每12小时
+      'daily': '0 0 * * *'        // 每天零点
+    }
+
     this.rankConfig = {
-      updateFrequency: config?.updateFrequency || '0 0 * * *',
-      displayBlacklist: config?.displayBlacklist || [],
-      displayWhitelist: config?.displayWhitelist || [],
+      updateFrequency: updateFrequencyMap[config.updateInterval] || updateFrequencyMap.daily,
+      displayBlacklist: config.displayBlacklist || [],
+      displayWhitelist: config.displayWhitelist || []
     }
   }
 

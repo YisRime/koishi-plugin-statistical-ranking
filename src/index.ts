@@ -178,7 +178,11 @@ export async function apply(ctx: Context, config: Config = {}) {
 
   let rank: RankManager | null = null
   if (config.enableRank && ctx.cron) {
-    rank = new RankManager(ctx, config)
+    rank = new RankManager(ctx, {
+      updateInterval: config.updateInterval,
+      displayBlacklist: config.displayBlacklist,
+      displayWhitelist: config.displayWhitelist
+    })
     await rank.initialize()
   }
 
