@@ -71,24 +71,51 @@ export class RankManager {
       displayBlacklist: config.displayBlacklist || [],
       displayWhitelist: config.displayWhitelist || []
     }
+
+    this.ctx.logger.info(`[排行榜] 初始化排行榜管理器，更新频率: ${config.updateInterval || 'daily'}`)
   }
 
   /**
    * 初始化排行榜功能，创建数据库模型并设置定时任务
    */
   async initialize() {
-    this.ctx.model.extend('analytics.rank', {
-      stat: 'unsigned',
-      timestamp: 'timestamp',
-      count: 'unsigned',
-      delta: 'integer',
-      rank: 'unsigned',
-      prev: { type: 'unsigned', nullable: true }
-    }, {
-      primary: ['stat', 'timestamp'],
-      unique: [['timestamp', 'rank']]
-    })
-    this.ctx.cron(this.rankConfig.updateFrequency, () => this.generateRankSnapshot())
+    this.ctx.logger.info(`[排行榜] 开始初始化排行榜功能`)
+
+    try {
+      this.ctx.model.extend('analytics.rank', {
+        stat: 'unsigned',
+        timestamp: 'timestamp',
+        count: 'unsigned',
+        delta: 'integer',
+        rank: 'unsigned',
+        prev: { type: 'unsigned', nullable: true }
+      }, {
+        primary: ['stat', 'timestamp'],
+        unique: [['timestamp', 'rank']]
+      })
+      this.ctx.logger.debug(`[排行榜] 数据库模型创建成功`)
+
+      // 注册定时任务
+      this.ctx.cron(this.rankConfig.updateFrequency, () => {
+        this.ctx.logger.info(`[排行榜] 触发定时任务，开始生成排行快照`)
+        return this.generateRankSnapshot()
+      })
+      this.ctx.logger.info(`[排行榜] cron任务已注册，频率: ${this.rankConfig.updateFrequency}`)
+
+      // 立即执行一次快照生成，检查功能是否正常
+      this.ctx.setTimeout(async () => {
+        this.ctx.logger.info(`[排行榜] 执行初始化快照生成`)
+        try {
+          await this.generateRankSnapshot()
+          this.ctx.logger.info(`[排行榜] 初始化快照生成完成`)
+        } catch (e) {
+          this.ctx.logger.error(`[排行榜] 初始化快照生成失败`, e)
+        }
+      }, 10000) // 延迟10秒执行，确保其他初始化已完成
+    } catch (e) {
+      this.ctx.logger.error(`[排行榜] 初始化失败`, e)
+      throw e
+    }
   }
 
   /**
@@ -97,14 +124,24 @@ export class RankManager {
    */
   async generateRankSnapshot() {
     const now = new Date()
+    this.ctx.logger.info(`[排行榜] 开始生成排行快照: ${now.toISOString()}`)
+
     // 标准化为当天0点
     const formattedTimestamp = new Date(now)
     formattedTimestamp.setHours(0, 0, 0, 0)
     // 获取前一天的时间戳
     const prevTimestamp = new Date(formattedTimestamp.getTime() - 86400000)
+
     try {
+      this.ctx.logger.debug(`[排行榜] 查询统计数据记录...`)
       const records = await this.ctx.database.get('analytics.stat', { command: '_message' })
-      if (!records.length) return;
+      this.ctx.logger.debug(`[排行榜] 获取到 ${records.length} 条统计记录`)
+
+      if (!records.length) {
+        this.ctx.logger.warn(`[排行榜] 未找到任何统计记录，跳过快照生成`)
+        return;
+      }
+
       // 按群组分组并获取统计ID
       const guildGroups = new Map<string, StatRecord[]>()
       const statIdSet = new Set<number>()
@@ -115,20 +152,38 @@ export class RankManager {
         guildGroups.get(key).push(record)
         statIdSet.add(record.id)
       })
+
+      this.ctx.logger.debug(`[排行榜] 统计数据分组完成，共 ${guildGroups.size} 个群组，${statIdSet.size} 条有效记录`)
+
       // 获取上次快照记录
+      this.ctx.logger.debug(`[排行榜] 查询上次快照记录，日期: ${prevTimestamp.toISOString()}`)
       const prevSnapshots = await this.ctx.database.get('analytics.rank', {
         timestamp: prevTimestamp,
         stat: { $in: Array.from(statIdSet) }
       })
+      this.ctx.logger.debug(`[排行榜] 获取到 ${prevSnapshots.length} 条上次快照记录`)
+
       const prevSnapshotMap = new Map(prevSnapshots.map(s => [s.stat, s]))
+
       // 批量处理数据
       const batchUpsert = []
-      for (const [, groupRecords] of guildGroups.entries()) {
+      let processedGroups = 0
+      let skippedGroups = 0
+
+      for (const [groupKey, groupRecords] of guildGroups.entries()) {
+        this.ctx.logger.debug(`[排行榜] 处理群组 ${groupKey} 的数据，${groupRecords.length} 条记录`)
+
         const filteredRecords = Utils.filterStatRecords(groupRecords, {
           displayWhitelist: this.rankConfig.displayWhitelist,
           displayBlacklist: this.rankConfig.displayBlacklist
         })
-        if (!filteredRecords.length) continue
+
+        if (!filteredRecords.length) {
+          skippedGroups++
+          this.ctx.logger.debug(`[排行榜] 群组 ${groupKey} 过滤后无数据，跳过`)
+          continue
+        }
+
         [...filteredRecords]
           .sort((a, b) => b.count - a.count)
           .forEach((record, i) => {
@@ -143,12 +198,22 @@ export class RankManager {
               prev: prevSnapshot?.rank || null
             })
           })
+
+        processedGroups++
       }
+
+      this.ctx.logger.info(`[排行榜] 数据处理完成，${processedGroups} 个群组有效，${skippedGroups} 个群组被跳过，生成 ${batchUpsert.length} 条排名记录`)
+
       if (batchUpsert.length > 0) {
+        this.ctx.logger.debug(`[排行榜] 开始更新排行数据到数据库...`)
         await this.ctx.database.upsert('analytics.rank', batchUpsert)
+        this.ctx.logger.info(`[排行榜] 排行数据更新成功 (${batchUpsert.length} 条记录)`)
+      } else {
+        this.ctx.logger.warn(`[排行榜] 没有数据需要更新`)
       }
     } catch (error) {
-      this.ctx.logger.error(`更新排行失败:`, error)
+      this.ctx.logger.error(`[排行榜] 更新排行失败:`, error)
+      throw error
     }
   }
 
@@ -161,20 +226,38 @@ export class RankManager {
    * @returns 排行榜差异数据数组
    */
   async getRankingData(platform: string, guildId: string, days: number = 1, limit: number = 10): Promise<RankDiff[]> {
+    this.ctx.logger.debug(`[排行榜] 查询排行数据: 平台=${platform}, 群组=${guildId}, 天数=${days}, 限制=${limit}`)
+
     try {
       // 获取统计记录
+      this.ctx.logger.debug(`[排行榜] 获取统计记录...`)
       const statRecords = await this.ctx.database.get('analytics.stat', {
         platform, guildId, command: '_message'
       }, ['id', 'userId', 'userName'])
-      if (!statRecords.length) return []
+
+      if (!statRecords.length) {
+        this.ctx.logger.warn(`[排行榜] 未找到群组 ${platform}:${guildId} 的统计记录`)
+        return []
+      }
+
+      this.ctx.logger.debug(`[排行榜] 获取到 ${statRecords.length} 条统计记录`)
+
       const statIds = statRecords.map(r => r.id).filter(Boolean)
-      if (!statIds.length) return []
+      if (!statIds.length) {
+        this.ctx.logger.warn(`[排行榜] 没有有效的统计ID`)
+        return []
+      }
+
       // 计算时间戳
       const currentTimestamp = new Date(new Date())
       currentTimestamp.setHours(0, 0, 0, 0)
       const previousTimestamp = new Date(currentTimestamp)
       previousTimestamp.setDate(previousTimestamp.getDate() - days)
+
+      this.ctx.logger.debug(`[排行榜] 查询时间范围: ${previousTimestamp.toISOString()} → ${currentTimestamp.toISOString()}`)
+
       // 查询当前排行数据
+      this.ctx.logger.debug(`[排行榜] 查询当前排行数据...`)
       const currentRankData = await this.ctx.database.get('analytics.rank', {
         stat: { $in: statIds },
         timestamp: currentTimestamp
@@ -182,13 +265,24 @@ export class RankManager {
         sort: { rank: 'asc' },
         limit
       })
-      if (!currentRankData.length) return []
+
+      if (!currentRankData.length) {
+        this.ctx.logger.warn(`[排行榜] 未找到当前日期 ${currentTimestamp.toISOString()} 的排行数据`)
+        return []
+      }
+
+      this.ctx.logger.debug(`[排行榜] 获取到 ${currentRankData.length} 条当前排行数据`)
+
       // 获取上一时段数据
       const relevantStatIds = currentRankData.map(r => r.stat)
+      this.ctx.logger.debug(`[排行榜] 查询上一时段排行数据...`)
       const previousRankData = await this.ctx.database.get('analytics.rank', {
         stat: { $in: relevantStatIds },
         timestamp: previousTimestamp
       })
+
+      this.ctx.logger.debug(`[排行榜] 获取到 ${previousRankData.length} 条上一时段排行数据`)
+
       const prevRankMap = new Map(previousRankData.map(r => [r.stat, r]))
       const userMap = new Map(
         statRecords
@@ -198,7 +292,8 @@ export class RankManager {
             userName: Utils.sanitizeString(r.userName || r.userId || '')
           }])
       )
-      return currentRankData.map(record => {
+
+      const result = currentRankData.map(record => {
         const prevRecord = prevRankMap.get(record.stat)
         const user = userMap.get(record.stat) || { userId: '', userName: '' }
         return {
@@ -212,8 +307,11 @@ export class RankManager {
           rankChange: record.prev ? record.prev - record.rank : null
         }
       })
+
+      this.ctx.logger.info(`[排行榜] 成功获取 ${result.length} 条排行数据`)
+      return result
     } catch (error) {
-      this.ctx.logger.error(`获取排行出错:`, error)
+      this.ctx.logger.error(`[排行榜] 获取排行出错:`, error)
       return []
     }
   }
@@ -223,12 +321,16 @@ export class RankManager {
    * @param stat 统计命令对象
    */
   registerRankCommands(stat) {
+    this.ctx.logger.info(`[排行榜] 注册排行榜命令`)
+
     stat.subcommand('.rank [arg:string]', '查看发言排行')
       .option('guild', '-g [guild:string] 指定群组统计', { authority: 2 })
       .option('platform', '-p [platform:string] 指定平台统计', { authority: 2 })
       .option('time', '-t [timerange:string] 指定时间范围', { fallback: 'd' })
       .option('visual', '-v 切换可视化模式')
       .action(async ({ session, options, args }) => {
+        this.ctx.logger.debug(`[排行榜] 执行排行命令: ${JSON.stringify({ args, options })}`)
+
         // 解析参数
         const arg = args[0]?.toLowerCase()
         const showAll = arg === 'all'
@@ -238,35 +340,63 @@ export class RankManager {
         const { days, startDate, endDate } = this.parseTimeRange(options.time || 'd')
         const platform = options.platform || session.platform
         const guildId = options.guild || session.guildId
-        if (!guildId) return '暂无数据'
-        const guildName = await session.bot.getGuild?.(guildId)
-          .then(guild => guild?.name || guildId)
-          .catch(() => guildId)
+
+        if (!guildId) {
+          this.ctx.logger.debug(`[排行榜] 无法获取群组ID，返回错误信息`)
+          return '暂无数据'
+        }
+
+        this.ctx.logger.debug(`[排行榜] 查询排行: 平台=${platform}, 群组=${guildId}, 天数=${days}, 页码=${page}`)
+
+        let guildName = guildId
+        try {
+          const guild = await session.bot.getGuild?.(guildId)
+          guildName = guild?.name || guildId
+          this.ctx.logger.debug(`[排行榜] 获取到群组名: ${guildName}`)
+        } catch (e) {
+          this.ctx.logger.debug(`[排行榜] 获取群组名失败`, e)
+        }
+
         // 获取排行数据
         const allRankData = await this.getRankingData(platform, guildId, days, showAll ? 100 : pageSize * page)
-        if (!allRankData.length) return `${guildName} 暂无数据`
+
+        if (!allRankData.length) {
+          this.ctx.logger.debug(`[排行榜] 未找到排行数据`)
+          return `${guildName} 暂无数据`
+        }
+
         // 应用分页
         let rankData = allRankData
         if (!showAll) {
           const startIndex = (page - 1) * pageSize
           rankData = allRankData.slice(startIndex, startIndex + pageSize)
         }
+
+        this.ctx.logger.debug(`[排行榜] 分页后数据: ${rankData.length} 条`)
+
         const timeRangeDesc = `${Utils.formatDateTime(startDate).split(' ')[0]} → ${Utils.formatDateTime(endDate).split(' ')[0]}`
         const maxPage = Math.ceil(allRankData.length / pageSize)
         const pageInfo = (showAll || maxPage <= 1) ? '' : `（第${page}/${maxPage}页）`
         const title = `${guildName} 发言排行${pageInfo} (${timeRangeDesc})`
+
         // 渲染结果
         if (options.visual && this.ctx.puppeteer) {
+          this.ctx.logger.debug(`[排行榜] 使用图片模式渲染`)
           try {
             const renderer = new Renderer(this.ctx)
             const buffer = await this.renderRankingImage(renderer, rankData, title)
+            this.ctx.logger.debug(`[排行榜] 图片渲染成功，大小: ${buffer.length} 字节`)
             return h.image(buffer, 'image/png')
           } catch (error) {
-            this.ctx.logger.error('图片渲染失败:', error)
+            this.ctx.logger.error(`[排行榜] 图片渲染失败:`, error)
           }
         }
+
+        this.ctx.logger.debug(`[排行榜] 使用文本模式渲染`)
         return this.formatRankingText(rankData, title)
       })
+
+    this.ctx.logger.info(`[排行榜] 排行榜命令注册完成`)
   }
 
   /**

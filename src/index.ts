@@ -177,7 +177,7 @@ export async function apply(ctx: Context, config: Config = {}) {
   database.initialize(ctx)
 
   let rank: RankManager | null = null
-  if (config.enableRank && ctx.cron) {
+  if (config.enableRank) {
     rank = new RankManager(ctx, {
       updateInterval: config.updateInterval,
       displayBlacklist: config.displayBlacklist,
