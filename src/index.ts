@@ -49,7 +49,7 @@ export const Config = Schema.intersect([
   Schema.object({
     defaultImageMode: Schema.boolean().default(false).description('默认输出图片'),
     enableDataTransfer: Schema.boolean().default(true).description('启用导入导出'),
-    enableRank: Schema.boolean().default(true).description('启用排行榜'),
+    enableRank: Schema.boolean().default(false).description('启用发言排行'),
   }).description('基础配置'),
   Schema.union([
     Schema.object({
