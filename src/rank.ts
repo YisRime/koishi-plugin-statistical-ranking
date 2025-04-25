@@ -249,20 +249,29 @@ export class Rank {
         const minRowsForNewPage = 5
         const { hours, description } = this.parseTimeRange(options.time || 'd')
         const platform = options.platform || session.platform
-        // 全局排行时 guildId 设为 null
         const guildId = options.all ? null : (options.guild || session.guildId)
         if (!options.all && !guildId) return '暂无数据'
         try {
-          let guildName: string
-          if (options.all) {
-            guildName = platform ? `[${platform}]全局` : '全局'
-          } else {
+          // 获取群名
+          let guildName = ''
+          if (guildId) {
             guildName = await session.bot.getGuild?.(guildId)
               .then(guild => guild?.name || guildId)
               .catch(() => guildId)
           }
+          // 构造条件
+          const conditions = Utils.buildConditions({
+            guild: guildId ? guildName || guildId : null,
+            platform,
+          })
+          let title = ''
+          if (conditions.length) {
+            title = `${conditions.join('、')}${description}的发言排行`
+          } else {
+            title = `全局${description}的发言排行`
+          }
           const allRankData = await this.getRankingData(platform, guildId, hours, showAll ? 1000 : 1000, !!options.all)
-          if (!allRankData.length) return `${guildName} 暂无数据`
+          if (!allRankData.length) return `${guildName || platform} 暂无数据`
           // 分页
           let pagedRankData: RankDiff[]
           let totalPages = 1
@@ -275,18 +284,17 @@ export class Rank {
             pagedRankData = allRankData.slice(startIdx, startIdx + pageSize)
           }
           const pageInfo = (showAll || totalPages <= 1) ? '' : `（第${page}/${totalPages}页）`
-          const title = `${guildName}${description}发言排行${pageInfo}`
+          const finalTitle = `${title}${pageInfo}`
           const useImageMode = options.visual !== undefined ?
             !this.defaultImageMode : this.defaultImageMode
           if (useImageMode && this.ctx.puppeteer) {
             const renderer = new Renderer(this.ctx)
-            // 图片模式始终渲染全部数据，自动分页，忽略页码参数
             const imagePages = paginateRankData(allRankData, pageSize, minRowsForNewPage)
             const buffers: Buffer[] = []
             for (let i = 0; i < imagePages.length; i++) {
               const pageTitle = imagePages.length > 1
-                ? `${guildName}${description}发言排行（第${i + 1}/${imagePages.length}页）`
-                : `${guildName}${description}发言排行`
+                ? `${title}（第${i + 1}/${imagePages.length}页）`
+                : title
               const buffer = await this.renderRankingImage(renderer, imagePages[i], pageTitle)
               buffers.push(buffer)
             }
@@ -294,14 +302,14 @@ export class Rank {
               ? h.image(buffers[0], 'image/png')
               : buffers.map(buffer => h.image(buffer, 'image/png')).join('\n')
           }
-          return this.formatRankingText(pagedRankData, title)
+          return this.formatRankingText(pagedRankData, finalTitle)
         } catch (error) {
           this.ctx.logger.error('排行获取出错:', error)
           return '排行获取出错'
         }
 
         // 分页函数
-        function paginateRankData(data: RankDiff[], maxRowsPerPage = 15, minRowsForNewPage = 5): RankDiff[][] {
+        function paginateRankData(data: RankDiff[], maxRowsPerPage = 200, minRowsForNewPage = 50): RankDiff[][] {
           if (!data.length || data.length <= maxRowsPerPage) return [data]
           const totalRows = data.length
           const normalPageCount = Math.ceil(totalRows / maxRowsPerPage)
@@ -387,12 +395,15 @@ export class Rank {
     const html = `
       <div class="material-card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
-          <div class="stat-chip">
-            <span style="color:rgba(0,0,0,0.6);">总计: </span>
-            <span style="font-weight:500; margin-left:3px;">${data.length}人 / </span>
-            <span style="font-weight:500; margin-left:3px; color:${totalChange >= 0 ? '#4CAF50' : '#F44336'};">
-              ${totalChange >= 0 ? '+' : ''}${totalChange}条
-            </span>
+          <div style="display:flex; gap:8px;">
+            <div class="stat-chip" style="color:rgba(0,0,0,0.6);">
+              <span>总计: </span>
+              <span style="font-weight:500; margin-left:3px;">${data.length}</span>
+            </div>
+            <div class="stat-chip" style="color:rgba(0,0,0,0.6);">
+              <span>总条数: </span>
+              <span style="font-weight:500; margin-left:3px;">${totalChange}</span>
+            </div>
           </div>
           <h2 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${title}</h2>
           <div class="stat-chip" style="color:rgba(0,0,0,0.6);">${Utils.formatDateTime(new Date())}</div>
@@ -402,9 +413,9 @@ export class Rank {
             <thead>
               <tr style="background:#2196F3;">
                 <th style="text-align:center; border-radius:6px 0 0 0; padding:8px 12px; width:60px;">排名</th>
-                <th style="text-align:left; padding:8px 12px;">用户</th>
-                <th style="text-align:right; white-space:nowrap; padding:8px 12px;">增量</th>
-                <th style="text-align:center; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px; width:80px;">排名变化</th>
+                <th style="text-align:left; padding:8px 12px;">名称</th>
+                <th style="text-align:right; white-space:nowrap; padding:8px 12px;">数量</th>
+                <th style="text-align:center; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px; width:80px;">变化</th>
               </tr>
             </thead>
             <tbody>${tableRows}</tbody>

@@ -257,7 +257,7 @@ export class Renderer {
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
             <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
               <div class="stat-chip">
-                <span style="color:rgba(0,0,0,0.6);">总项目: </span>
+                <span style="color:rgba(0,0,0,0.6);">总计: </span>
                 <span style="font-weight:500; margin-left:3px;">${totalItems}</span>
               </div>
               <div class="stat-chip">
@@ -310,7 +310,7 @@ export class Renderer {
             <div style="display:flex; align-items:center; margin:8px 0; flex-wrap:nowrap;">
               <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
                 <div class="stat-chip">
-                  <span style="color:rgba(0,0,0,0.6);">总项目: </span>
+                  <span style="color:rgba(0,0,0,0.6);">总计: </span>
                   <span style="font-weight:500; margin-left:3px;">${dataset.totalItems}</span>
                 </div>
                 <div class="stat-chip">
@@ -370,7 +370,7 @@ export class Renderer {
             <div style="display:flex; align-items:center; margin:8px 0; flex-wrap:nowrap;">
               <div style="display:flex; gap:8px; flex-shrink:0; margin-right:12px;">
                 <div class="stat-chip">
-                  <span style="color:rgba(0,0,0,0.6);">总项目: </span>
+                  <span style="color:rgba(0,0,0,0.6);">总计: </span>
                   <span style="font-weight:500; margin-left:3px;">${dataset.totalItems}</span>
                 </div>
                 <div class="stat-chip">
