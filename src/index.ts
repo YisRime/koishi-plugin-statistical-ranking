@@ -214,15 +214,9 @@ export async function apply(ctx: Context, config: Config = {}) {
     try {
       const renderer = new Renderer(ctx)
       const result = await renderFn(renderer)
-      if (Array.isArray(result)) {
-        // 多页图片，依次发送
-        for (const buffer of result) {
-          await session.send(h.image(buffer, 'image/png'))
-        }
-      } else {
-        // 单页图片，直接发送
-        await session.send(h.image(result, 'image/png'))
-      }
+      const buffers = Array.isArray(result) ? result : [result]
+      const msg = buffers.map(buffer => h.image(buffer, 'image/png')).join('')
+      await session.send(msg)
       return true
     } catch (e) {
       ctx.logger.error('图片渲染失败', e)
