@@ -333,16 +333,14 @@ export const Utils = {
   /**
    * 通用数组分页
    * @param {Array<any>} data 数据数组
-   * @param {number} maxRowsPerPage 每页最大行数
-   * @param {number} minRowsForNewPage 最后一页最小行数
    * @returns {Array<Array<any>>} 分页后的数据
    */
-  paginateArray<T>(data: T[], maxRowsPerPage = 200, minRowsForNewPage = 50): T[][] {
-    if (!data.length || data.length <= maxRowsPerPage) return [data];
+  paginateArray<T>(data: T[]): T[][] {
+    if (!data.length || data.length <= 200) return [data];
     const totalRows = data.length;
-    const normalPageCount = Math.ceil(totalRows / maxRowsPerPage);
-    const lastPageRows = totalRows - (normalPageCount - 1) * maxRowsPerPage;
-    const actualPageCount = lastPageRows < minRowsForNewPage && normalPageCount > 1
+    const normalPageCount = Math.ceil(totalRows / 200);
+    const lastPageRows = totalRows - (normalPageCount - 1) * 200;
+    const actualPageCount = lastPageRows < 50 && normalPageCount > 1
       ? normalPageCount - 1
       : normalPageCount;
     if (actualPageCount <= 1) return [data];

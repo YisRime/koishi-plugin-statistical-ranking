@@ -211,8 +211,9 @@ export class Rank {
       }
       intervalRankArr.sort((a, b) => b.intervalCount - a.intervalCount)
       intervalRankArr.forEach((item, idx) => { item.rank = idx + 1 })
+      // 只有当用户之前有发言记录时才计算排名变化，否则标记为"新"
       intervalRankArr.forEach(item => {
-        item.rankChange = (item.prevRank !== undefined && item.prevRank !== null)
+        item.rankChange = (item.prevRank !== undefined && item.prevRank !== null && item.previousCount > 0)
           ? item.prevRank - item.rank : null
       })
       // 只返回有增量的记录
@@ -260,11 +261,12 @@ export class Rank {
               .catch(() => guildId)
           }
           // 构造条件
+          let title = ''
+          const showPlatform = !!options.platform
           const conditions = Utils.buildConditions({
             guild: guildId ? guildName || guildId : null,
-            platform,
+            platform: showPlatform ? platform : null,
           })
-          let title = ''
           if (conditions.length) {
             title = `${conditions.join('、')}${description}的发言排行`
           } else {
@@ -289,7 +291,7 @@ export class Rank {
             !this.defaultImageMode : this.defaultImageMode
           if (useImageMode && this.ctx.puppeteer) {
             const renderer = new Renderer(this.ctx)
-            const imagePages = Utils.paginateArray(allRankData, pageSize, minRowsForNewPage)
+            const imagePages = Utils.paginateArray(allRankData)
             const buffers: Buffer[] = []
             for (let i = 0; i < imagePages.length; i++) {
               const pageTitle = imagePages.length > 1
