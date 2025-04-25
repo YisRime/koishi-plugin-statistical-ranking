@@ -43,7 +43,7 @@ export interface StatProcessOptions {
 /**
  * 统计数据处理函数集合
  */
-export const Stat = {
+export const statProcessor = {
   /**
    * 处理统计记录并格式化显示
    * @param {StatRecord[]} records - 统计记录数组

@@ -241,7 +241,7 @@ export class Rank {
       .action(async ({ session, options, args }) => {
         const arg = args[0]?.toLowerCase()
         const showAll = arg === 'all'
-        const page = arg && /^\d+$/.test(arg) ? parseInt(arg) : 1
+        let page = arg && /^\d+$/.test(arg) ? parseInt(arg) : 1
         const pageSize = 15
         const minRowsForNewPage = 5
         const { hours, description } = this.parseTimeRange(options.time || 'd')
@@ -252,7 +252,7 @@ export class Rank {
           const guildName = await session.bot.getGuild?.(guildId)
             .then(guild => guild?.name || guildId)
             .catch(() => guildId)
-          const allRankData = await this.getRankingData(platform, guildId, hours, showAll ? 100 : pageSize * (showAll ? 100 : page))
+          const allRankData = await this.getRankingData(platform, guildId, hours, showAll ? 1000 : 1000)
           if (!allRankData.length) return `${guildName} 暂无数据`
           let pagedRankData: RankDiff[]
           let maxPage = 1
@@ -260,43 +260,32 @@ export class Rank {
             pagedRankData = allRankData
           } else {
             maxPage = Math.ceil(allRankData.length / pageSize) || 1
-            const validPage = Math.min(Math.max(1, page), maxPage)
-            pagedRankData = allRankData.slice((validPage - 1) * pageSize, validPage * pageSize)
+            page = Math.min(Math.max(1, page), maxPage)
+            const startIdx = (page - 1) * pageSize
+            const endIdx = Math.min(startIdx + pageSize, allRankData.length)
+            pagedRankData = allRankData.slice(startIdx, endIdx)
           }
-          const pageInfo = (showAll || maxPage <= 1) ? '' : `（第${showAll ? 1 : page}/${maxPage}页）`
+          const pageInfo = (showAll || maxPage <= 1) ? '' : `（第${page}/${maxPage}页）`
           const title = `${guildName}${description}发言排行${pageInfo}`
           const useImageMode = options.visual !== undefined ?
             !this.defaultImageMode : this.defaultImageMode
           if (useImageMode && this.ctx.puppeteer) {
             const renderer = new Renderer(this.ctx)
-            function paginateRankData(data: RankDiff[], maxRowsPerPage = 15, minRowsForNewPage = 5): RankDiff[][] {
-              if (!data.length || data.length <= maxRowsPerPage) return [data]
-              const totalRows = data.length
-              const normalPageCount = Math.ceil(totalRows / maxRowsPerPage)
-              const lastPageRows = totalRows - (normalPageCount - 1) * maxRowsPerPage
-              const actualPageCount = lastPageRows < minRowsForNewPage && normalPageCount > 1
-                ? normalPageCount - 1
-                : normalPageCount
-              if (actualPageCount <= 1) return [data]
-              const mainPageSize = Math.ceil(totalRows / actualPageCount)
-              const pages: RankDiff[][] = []
-              let currentIdx = 0
-              for (let i = 0; i < actualPageCount; i++) {
-                const pageSize = i === actualPageCount - 1
-                  ? totalRows - currentIdx
-                  : mainPageSize
-                pages.push(data.slice(currentIdx, currentIdx + pageSize))
-                currentIdx += pageSize
-              }
-              return pages
+            // 图片分页与文本分页一致
+            let imagePages: RankDiff[][]
+            if (showAll) {
+              // all 模式下，自动分页（如原逻辑）
+              imagePages = paginateRankData(allRankData, pageSize, minRowsForNewPage)
+            } else {
+              // 非 all 模式下，只渲染当前页
+              imagePages = [pagedRankData]
             }
-            const pages = paginateRankData(allRankData, pageSize, minRowsForNewPage)
             const buffers: Buffer[] = []
-            for (let i = 0; i < pages.length; i++) {
-              const pageTitle = pages.length > 1
-                ? `${guildName}${description}发言排行（第${i + 1}/${pages.length}页）`
+            for (let i = 0; i < imagePages.length; i++) {
+              const pageTitle = imagePages.length > 1
+                ? `${guildName}${description}发言排行（第${i + 1}/${imagePages.length}页）`
                 : title
-              const buffer = await this.renderRankingImage(renderer, pages[i], pageTitle)
+              const buffer = await this.renderRankingImage(renderer, imagePages[i], pageTitle)
               buffers.push(buffer)
             }
             return buffers.length === 1
@@ -307,6 +296,29 @@ export class Rank {
         } catch (error) {
           this.ctx.logger.error('排行获取出错:', error)
           return '排行获取出错'
+        }
+
+        // 分页函数提取到外部，避免重复
+        function paginateRankData(data: RankDiff[], maxRowsPerPage = 15, minRowsForNewPage = 5): RankDiff[][] {
+          if (!data.length || data.length <= maxRowsPerPage) return [data]
+          const totalRows = data.length
+          const normalPageCount = Math.ceil(totalRows / maxRowsPerPage)
+          const lastPageRows = totalRows - (normalPageCount - 1) * maxRowsPerPage
+          const actualPageCount = lastPageRows < minRowsForNewPage && normalPageCount > 1
+            ? normalPageCount - 1
+            : normalPageCount
+          if (actualPageCount <= 1) return [data]
+          const mainPageSize = Math.ceil(totalRows / actualPageCount)
+          const pages: RankDiff[][] = []
+          let currentIdx = 0
+          for (let i = 0; i < actualPageCount; i++) {
+            const pageSize = i === actualPageCount - 1
+              ? totalRows - currentIdx
+              : mainPageSize
+            pages.push(data.slice(currentIdx, currentIdx + pageSize))
+            currentIdx += pageSize
+          }
+          return pages
         }
       })
   }

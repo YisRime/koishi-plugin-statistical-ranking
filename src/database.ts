@@ -7,7 +7,7 @@ import { Utils } from './utils'
  * 数据库操作相关函数集合
  * @description 提供数据库初始化、记录保存等核心功能
  */
-export const Database = {
+export const database = {
   /**
    * 初始化数据库表结构
    * @param ctx - Koishi 上下文
