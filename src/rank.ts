@@ -289,13 +289,13 @@ export class Rank {
             !this.defaultImageMode : this.defaultImageMode
           if (useImageMode && this.ctx.puppeteer) {
             const renderer = new Renderer(this.ctx)
-            const imagePages = paginateRankData(allRankData, pageSize, minRowsForNewPage)
+            const imagePages = Utils.paginateArray(allRankData, pageSize, minRowsForNewPage)
             const buffers: Buffer[] = []
             for (let i = 0; i < imagePages.length; i++) {
               const pageTitle = imagePages.length > 1
                 ? `${title}（第${i + 1}/${imagePages.length}页）`
                 : title
-              const buffer = await this.renderRankingImage(renderer, imagePages[i], pageTitle)
+              const buffer = await renderer.renderRankingImage(imagePages[i], pageTitle)
               buffers.push(buffer)
             }
             return buffers.length === 1
@@ -306,29 +306,6 @@ export class Rank {
         } catch (error) {
           this.ctx.logger.error('排行获取出错:', error)
           return '排行获取出错'
-        }
-
-        // 分页函数
-        function paginateRankData(data: RankDiff[], maxRowsPerPage = 200, minRowsForNewPage = 50): RankDiff[][] {
-          if (!data.length || data.length <= maxRowsPerPage) return [data]
-          const totalRows = data.length
-          const normalPageCount = Math.ceil(totalRows / maxRowsPerPage)
-          const lastPageRows = totalRows - (normalPageCount - 1) * maxRowsPerPage
-          const actualPageCount = lastPageRows < minRowsForNewPage && normalPageCount > 1
-            ? normalPageCount - 1
-            : normalPageCount
-          if (actualPageCount <= 1) return [data]
-          const mainPageSize = Math.ceil(totalRows / actualPageCount)
-          const pages: RankDiff[][] = []
-          let currentIdx = 0
-          for (let i = 0; i < actualPageCount; i++) {
-            const pageSize = i === actualPageCount - 1
-              ? totalRows - currentIdx
-              : mainPageSize
-            pages.push(data.slice(currentIdx, currentIdx + pageSize))
-            currentIdx += pageSize
-          }
-          return pages
         }
       })
   }
@@ -369,60 +346,5 @@ export class Rank {
       return `${item.rank.toString().padStart(2)}. ${name}${padding} +${item.diff}条 ${rankChangeText}`
     }).join('\n')
     return `${title} ——\n${lines}`
-  }
-
-  /**
-   * 渲染排行榜图片
-   */
-  async renderRankingImage(renderer: Renderer, data: RankDiff[], title: string): Promise<Buffer> {
-    const totalChange = data.reduce((sum, item) => sum + item.diff, 0)
-    const tableRows = data.map((item, index) => {
-      const bgColor = index % 2 === 0 ? '#fff' : 'rgba(0,0,0,0.01)'
-      const rankChangeHtml =
-        item.rankChange === null ? `<span style="color:#9C27B0;">新</span>` :
-        item.rankChange > 0 ? `<span style="color:#4CAF50;">↑${item.rankChange}</span>` :
-        item.rankChange < 0 ? `<span style="color:#F44336;">↓${Math.abs(item.rankChange)}</span>` :
-        `<span style="color:#9E9E9E;">-</span>`;
-      return `
-        <tr style="background-color:${bgColor};">
-          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:center;">${item.rank}</td>
-          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04);">${Utils.truncateByDisplayWidth(item.userName, 18)}</td>
-          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap;">${item.diff > 0 ? '+' : ''}${item.diff}</td>
-          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:center; white-space:nowrap;">${rankChangeHtml}</td>
-        </tr>
-      `
-    }).join('')
-    const html = `
-      <div class="material-card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
-          <div style="display:flex; gap:8px;">
-            <div class="stat-chip" style="color:rgba(0,0,0,0.6);">
-              <span>总计: </span>
-              <span style="font-weight:500; margin-left:3px;">${data.length}</span>
-            </div>
-            <div class="stat-chip" style="color:rgba(0,0,0,0.6);">
-              <span>总条数: </span>
-              <span style="font-weight:500; margin-left:3px;">${totalChange}</span>
-            </div>
-          </div>
-          <h2 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${title}</h2>
-          <div class="stat-chip" style="color:rgba(0,0,0,0.6);">${Utils.formatDateTime(new Date())}</div>
-        </div>
-        <div class="table-container">
-          <table class="stat-table" style="width:100%; border-collapse:separate; border-spacing:0; background:white;">
-            <thead>
-              <tr style="background:#2196F3;">
-                <th style="text-align:center; border-radius:6px 0 0 0; padding:8px 12px; width:60px;">排名</th>
-                <th style="text-align:left; padding:8px 12px;">名称</th>
-                <th style="text-align:right; white-space:nowrap; padding:8px 12px;">数量</th>
-                <th style="text-align:center; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px; width:80px;">变化</th>
-              </tr>
-            </thead>
-            <tbody>${tableRows}</tbody>
-          </table>
-        </div>
-      </div>
-    `
-    return await renderer.htmlToImage(html)
   }
 }

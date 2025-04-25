@@ -193,39 +193,6 @@ export class Renderer {
   }
 
   /**
-   * 将统计记录分页处理
-   * @param {Array<{name: string, value: number, time: string, rawTime: Date}>} data - 统计数据
-   * @param {number} maxRowsPerPage - 每页最大行数
-   * @param {number} minRowsForNewPage - 创建新页面的最小行数
-   * @returns {Array<Array<{name: string, value: number, time: string, rawTime: Date}>>} 分页后的数据
-   */
-  paginateData(
-    data: Array<{name: string, value: number, time: string, rawTime: Date}>,
-    maxRowsPerPage: number = 200,
-    minRowsForNewPage: number = 50
-  ): Array<Array<{name: string, value: number, time: string, rawTime: Date}>> {
-    if (!data.length || data.length <= maxRowsPerPage) return [data];
-    const totalRows = data.length;
-    const normalPageCount = Math.ceil(totalRows / maxRowsPerPage);
-    const lastPageRows = totalRows - (normalPageCount - 1) * maxRowsPerPage;
-    const actualPageCount = lastPageRows < minRowsForNewPage && normalPageCount > 1
-      ? normalPageCount - 1
-      : normalPageCount;
-    if (actualPageCount <= 1) return [data];
-    const mainPageSize = Math.ceil(totalRows / actualPageCount);
-    const pages: Array<Array<{name: string, value: number, time: string, rawTime: Date}>> = [];
-    let currentIdx = 0;
-    for (let i = 0; i < actualPageCount; i++) {
-      const pageSize = i === actualPageCount - 1
-        ? totalRows - currentIdx
-        : mainPageSize;
-      pages.push(data.slice(currentIdx, currentIdx + pageSize));
-      currentIdx += pageSize;
-    }
-    return pages;
-  }
-
-  /**
    * 生成统计数据的图片
    * @param {StatRecord[]} records - 统计记录数组
    * @param {keyof StatRecord} key - 统计键名
@@ -244,7 +211,7 @@ export class Renderer {
       key === 'userId' ? '#9C27B0' :
       key === 'guildId' ? '#4CAF50' :
       '#2196F3';
-    const pages = this.paginateData(chartData);
+    const pages = Utils.paginateArray(chartData);
     const results: Buffer[] = [];
     const currentTime = Utils.formatDateTime(new Date());
     const totalItems = chartData.length;
@@ -398,6 +365,73 @@ export class Renderer {
       results.push(await this.htmlToImage(html));
     }
     return results;
+  }
+
+  /**
+   * 渲染排行榜图片
+   * @param {Array} data 排名数据
+   * @param {string} title 标题
+   * @returns {Promise<Buffer>} 图片 Buffer
+   */
+  async renderRankingImage(data: Array<{
+    userId: string
+    userName: string
+    currentCount: number
+    previousCount: number
+    diff: number
+    rank: number
+    prevRank?: number
+    rankChange?: number
+  }>, title: string): Promise<Buffer> {
+    const totalChange = data.reduce((sum, item) => sum + item.diff, 0)
+    const tableRows = data.map((item, index) => {
+      const bgColor = index % 2 === 0 ? '#fff' : 'rgba(0,0,0,0.01)'
+      const rankChangeHtml =
+        item.rankChange === null ? `<span style="color:#9C27B0;">新</span>` :
+        item.rankChange > 0 ? `<span style="color:#4CAF50;">↑${item.rankChange}</span>` :
+        item.rankChange < 0 ? `<span style="color:#F44336;">↓${Math.abs(item.rankChange)}</span>` :
+        `<span style="color:#9E9E9E;">-</span>`;
+      return `
+        <tr style="background-color:${bgColor};">
+          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:center;">${item.rank}</td>
+          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04);">${Utils.truncateByDisplayWidth(item.userName, 18)}</td>
+          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap;">${item.diff > 0 ? '+' : ''}${item.diff}</td>
+          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:center; white-space:nowrap;">${rankChangeHtml}</td>
+        </tr>
+      `
+    }).join('')
+    const html = `
+      <div class="material-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid rgba(0,0,0,0.08); flex-wrap:nowrap;">
+          <div style="display:flex; gap:8px;">
+            <div class="stat-chip" style="color:rgba(0,0,0,0.6);">
+              <span>总计: </span>
+              <span style="font-weight:500; margin-left:3px;">${data.length}</span>
+            </div>
+            <div class="stat-chip" style="color:rgba(0,0,0,0.6);">
+              <span>总条数: </span>
+              <span style="font-weight:500; margin-left:3px;">${totalChange}</span>
+            </div>
+          </div>
+          <h2 style="margin:0; font-size:18px; text-align:center; flex-grow:1; font-weight:500;">${title}</h2>
+          <div class="stat-chip" style="color:rgba(0,0,0,0.6);">${Utils.formatDateTime(new Date())}</div>
+        </div>
+        <div class="table-container">
+          <table class="stat-table" style="width:100%; border-collapse:separate; border-spacing:0; background:white;">
+            <thead>
+              <tr style="background:#2196F3;">
+                <th style="text-align:center; border-radius:6px 0 0 0; padding:8px 12px; width:60px;">排名</th>
+                <th style="text-align:left; padding:8px 12px;">名称</th>
+                <th style="text-align:right; white-space:nowrap; padding:8px 12px;">数量</th>
+                <th style="text-align:center; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px; width:80px;">变化</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+      </div>
+    `
+    return await this.htmlToImage(html)
   }
 
   /**
