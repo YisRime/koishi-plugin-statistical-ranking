@@ -31,40 +31,22 @@ interface RankConfig {
  */
 export class Rank {
   private ctx: Context
-  private updateCron: string
   private defaultImageMode: boolean
   private updateFrequencyHours: number
+  private updateInterval: string
+
+  private static readonly hourMap = {
+    'hourly': 1,
+    '6h': 6,
+    '12h': 12,
+    'daily': 24
+  }
 
   constructor(ctx: Context, config: RankConfig = {}) {
     this.ctx = ctx
-    const freq = {
-      'hourly': { cron: '0 * * * *', hours: 1 },
-      '6h': { cron: '0 */6 * * *', hours: 6 },
-      '12h': { cron: '0 */12 * * *', hours: 12 },
-      'daily': { cron: '0 0 * * *', hours: 24 }
-    }[config.updateInterval] || { cron: '0 0 * * *', hours: 24 }
-    this.updateCron = freq.cron
-    this.updateFrequencyHours = freq.hours
+    this.updateInterval = config.updateInterval || 'daily'
+    this.updateFrequencyHours = Rank.hourMap[this.updateInterval] || Rank.hourMap.daily
     this.defaultImageMode = !!config.defaultImageMode
-  }
-
-  /**
-   * 初始化排行榜表结构与定时任务
-   */
-  async initialize() {
-    this.ctx.model.extend('analytics.rank', {
-      id: 'unsigned',
-      stat: 'unsigned',
-      timestamp: 'timestamp',
-      count: 'unsigned',
-      rank: 'unsigned'
-    }, {
-      primary: 'id',
-      autoInc: true,
-      unique: [['stat', 'timestamp']]
-    })
-    this.ctx.cron(this.updateCron, () => this.generateRankSnapshot())
-    await this.generateRankSnapshot()
   }
 
   /**

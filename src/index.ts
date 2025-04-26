@@ -157,6 +157,16 @@ interface BindingRecord {
 }
 
 /**
+ * 排行榜更新频率到cron表达式的映射
+ */
+const rankUpdateCrons = {
+  'hourly': '0 * * * *',
+  '6h': '0 */6 * * *',
+  '12h': '0 */12 * * *',
+  'daily': '0 0 * * *'
+}
+
+/**
  * 插件主函数
  * @public
  * @param ctx - Koishi应用上下文
@@ -172,15 +182,18 @@ export async function apply(ctx: Context, config: Config = {}) {
     updateInterval: 'daily',
     ...config
   }
+
   database.initialize(ctx)
 
   let rank: Rank | null = null
   if (config.enableRank && ctx.cron) {
+    database.initializeRankTable(ctx)
     rank = new Rank(ctx, {
       updateInterval: config.updateInterval,
       defaultImageMode: config.defaultImageMode
     })
-    await rank.initialize()
+    ctx.cron(rankUpdateCrons[config.updateInterval] || rankUpdateCrons.daily,
+      () => rank.generateRankSnapshot())
   }
 
   /**
@@ -523,6 +536,6 @@ export async function apply(ctx: Context, config: Config = {}) {
     rank.registerRankCommands(stat)
   }
   if (config.enableDataTransfer) {
-    io.registerCommands(ctx, stat)
+    io.registerCommands(ctx, stat, rank)
   }
 }

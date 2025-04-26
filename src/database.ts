@@ -9,11 +9,12 @@ import { Utils } from './utils'
  */
 export const database = {
   /**
-   * 初始化数据库表结构
+   * 初始化统计数据库表结构
    * @param ctx - Koishi 上下文
    * @description 创建并定义 analytics.stat 表的结构
    */
   initialize(ctx: Context) {
+    // 统计数据表
     ctx.model.extend('analytics.stat', {
       id: 'unsigned',
       platform: { type: 'string', length: 60 },
@@ -28,6 +29,26 @@ export const database = {
       primary: 'id',
       autoInc: true,
       unique: [['platform', 'guildId', 'userId', 'command']],
+    })
+  },
+
+  /**
+   * 初始化排行榜数据库表结构
+   * @param ctx - Koishi 上下文
+   * @description 创建并定义 analytics.rank 表的结构
+   */
+  initializeRankTable(ctx: Context) {
+    // 排行榜数据表
+    ctx.model.extend('analytics.rank', {
+      id: 'unsigned',
+      stat: 'unsigned',
+      timestamp: 'timestamp',
+      count: 'unsigned',
+      rank: 'unsigned'
+    }, {
+      primary: 'id',
+      autoInc: true,
+      unique: [['stat', 'timestamp']]
     })
   },
 
@@ -86,6 +107,7 @@ export const database = {
       .option('command', '-c [command:string] 指定命令')
       .option('below', '-b [count:number] 少于指定次数', { fallback: 0 })
       .option('time', '-t [days:number] 指定天数之前', { fallback: 0 })
+      .option('rank', '-r 同时清除排行榜数据')
       .action(async ({ options }) => {
         // 转换选项键名以匹配数据库字段名
         const cleanOptions = {
@@ -98,9 +120,14 @@ export const database = {
         if (!options.below && !options.time && !Object.values(cleanOptions).some(Boolean)) {
           ctx.logger.info('正在删除所有统计记录并重建数据表...')
           await ctx.database.drop('analytics.stat')
+          // 如果rank选项开启且rank表存在，重建rank表
+          if (options.rank && ctx.database.tables['analytics.rank']) {
+            await ctx.database.drop('analytics.rank')
+            await this.initializeRankTable(ctx)
+          }
           await this.initialize(ctx)
           ctx.logger.info('已删除所有统计记录')
-          return '已删除所有统计记录'
+          return '已删除所有统计记录' + (options.rank ? '和排行记录' : '')
         }
         // 在删除前查询以获取用户和群组的昵称
         let userName = '', guildName = ''
@@ -129,6 +156,11 @@ export const database = {
         // 统计将要删除的记录数
         const recordsToDelete = await ctx.database.get('analytics.stat', query, ['id'])
         const deleteCount = recordsToDelete.length
+        // 如果需要同时清除排行榜数据，先删除关联的排行榜记录
+        if (options.rank && ctx.database.tables['analytics.rank'] && recordsToDelete.length > 0) {
+          const statIds = recordsToDelete.map(record => record.id)
+          await ctx.database.remove('analytics.rank', { stat: { $in: statIds } })
+        }
         // 执行删除操作
         await ctx.database.remove('analytics.stat', query)
         // 构建条件描述
@@ -149,6 +181,9 @@ export const database = {
           message += `${thresholdConditions.join('且')}的`;
         }
         message += `统计记录（共${deleteCount}条）`;
+        if (options.rank && ctx.database.tables['analytics.rank']) {
+          message += '和相关排行记录';
+        }
         return message;
       })
   }

@@ -3,11 +3,14 @@ import { StatRecord } from './index'
 import { Utils } from './utils'
 import * as fs from 'fs'
 import * as path from 'path'
+import { Rank } from './rank'
 
 /**
  * 统计数据导入导出工具集
  */
 export const io = {
+  rankInstance: null as Rank | null,
+
   /**
    * 导出统计数据到文件
    * @param {Context} ctx Koishi 上下文
@@ -201,6 +204,13 @@ export const io = {
       totalStats.invalidRecords += invalidRecords
     }
     const totalAttempted = totalStats.imported + totalStats.errors
+    if (this.rankInstance && totalStats.imported > 0) {
+      try {
+        await this.rankInstance.generateRankSnapshot()
+      } catch (error) {
+        ctx.logger.error('更新排行失败:', error)
+      }
+    }
     return files.length === 1
       ? `导入成功（${totalStats.imported}/${totalAttempted}条）`
       : `批量导入成功（${totalStats.imported}/${totalAttempted}条）`
@@ -252,6 +262,13 @@ export const io = {
       mergedRecords.set(key, curr)
     })
     const result = await this.importRecords(ctx, Array.from(mergedRecords.values()))
+    if (this.rankInstance && result.imported > 0) {
+      try {
+        await this.rankInstance.generateRankSnapshot()
+      } catch (error) {
+        ctx.logger.error('更新排行失败:', error)
+      }
+    }
     const totalAttempted = result.imported + result.errors
     return `导入成功（${result.imported}/${totalAttempted}条）`
   },
@@ -353,8 +370,12 @@ export const io = {
    * 注册导入导出命令
    * @param {Context} ctx Koishi 上下文
    * @param {any} parent 父命令对象
+   * @param {Rank} [rank] 排行榜实例，用于导入后更新排行
    */
-  registerCommands(ctx: Context, parent: any) {
+  registerCommands(ctx: Context, parent: any, rank?: Rank) {
+    if (rank) {
+      this.rankInstance = rank;
+    }
     parent.subcommand('.export', '导出统计数据', { authority: 4 })
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
