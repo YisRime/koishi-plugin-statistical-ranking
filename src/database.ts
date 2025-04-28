@@ -67,24 +67,31 @@ export const database = {
       .option('below', '-b [count:number] 少于指定次数')
       .option('time', '-t [days:number] 指定天数之前')
       .option('rank', '-r 只删除排行数据')
+      .option('drop', '-d 不重建数据表')
       .action(async ({ options }) => {
         const cleanOptions = { userId: options.user, platform: options.platform,
                               guildId: options.guild, command: options.command }
         if (options.rank && ctx.database.tables['analytics.rank']) {
           await ctx.database.drop('analytics.rank')
-          await this.initializeRankTable(ctx)
-          return '已删除所有排行记录'
+          if (!options.drop) {
+            await this.initializeRankTable(ctx)
+          }
+          return options.drop ? '已删除所有排行记录（未重建表）' : '已删除所有排行记录'
         }
         if (!options.below && !options.time && !Object.values(cleanOptions).some(Boolean)) {
-          ctx.logger.info('正在删除所有记录并重建数据表...')
+          ctx.logger.info('正在删除所有记录' + (options.drop ? '' : '并重建数据表') + '...')
           await ctx.database.drop('analytics.stat')
           if (ctx.database.tables['analytics.rank']) {
             await ctx.database.drop('analytics.rank')
-            await this.initializeRankTable(ctx)
+            if (!options.drop) {
+              await this.initializeRankTable(ctx)
+            }
           }
-          await this.initialize(ctx)
-          ctx.logger.info('已删除所有记录')
-          return '已删除所有记录'
+          if (!options.drop) {
+            await this.initialize(ctx)
+          }
+          ctx.logger.info('已删除所有记录' + (options.drop ? '（未重建表）' : ''))
+          return '已删除所有记录' + (options.drop ? '（未重建表）' : '')
         }
         let [userName, guildName] = ['', '']
         if (options.user) {
