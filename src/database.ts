@@ -2,11 +2,6 @@ import { Context } from 'koishi'
 import { StatRecord } from './index'
 import { Utils } from './utils'
 
-/**
- * @internal
- * 数据库操作相关函数集合
- * @description 提供数据库初始化、记录保存等核心功能
- */
 export const database = {
   /**
    * 初始化统计数据库表结构
@@ -14,22 +9,12 @@ export const database = {
    * @description 创建并定义 analytics.stat 表的结构
    */
   initialize(ctx: Context) {
-    // 统计数据表
     ctx.model.extend('analytics.stat', {
-      id: 'unsigned',
-      platform: { type: 'string', length: 60 },
-      guildId: { type: 'string', length: 150 },
-      userId: { type: 'string', length: 150 },
-      command: { type: 'string', length: 150 },
-      guildName: { type: 'string', nullable: true },
-      userName: { type: 'string', nullable: true },
-      count: 'unsigned',
-      lastTime: 'timestamp',
-    }, {
-      primary: 'id',
-      autoInc: true,
-      unique: [['platform', 'guildId', 'userId', 'command']],
-    })
+      id: 'unsigned', platform: { type: 'string', length: 60 },
+      guildId: { type: 'string', length: 150 }, userId: { type: 'string', length: 150 },
+      command: { type: 'string', length: 150 }, guildName: { type: 'string', nullable: true },
+      userName: { type: 'string', nullable: true }, count: 'unsigned', lastTime: 'timestamp',
+    }, { primary: 'id', autoInc: true, unique: [['platform', 'guildId', 'userId', 'command']] })
   },
 
   /**
@@ -38,17 +23,9 @@ export const database = {
    * @description 创建并定义 analytics.rank 表的结构
    */
   initializeRankTable(ctx: Context) {
-    // 排行榜数据表
     ctx.model.extend('analytics.rank', {
-      id: 'unsigned',
-      stat: 'unsigned',
-      timestamp: 'timestamp',
-      count: 'unsigned'
-    }, {
-      primary: 'id',
-      autoInc: true,
-      unique: [['stat', 'timestamp']]
-    })
+      id: 'unsigned', stat: 'unsigned', timestamp: 'timestamp', count: 'unsigned'
+    }, { primary: 'id', autoInc: true, unique: [['stat', 'timestamp']] })
   },
 
   /**
@@ -61,36 +38,19 @@ export const database = {
     data.command ??= '_message'
     if (data.guildId?.includes('private')) return;
     try {
-      const query = {
-        platform: data.platform,
-        guildId: data.guildId,
-        userId: data.userId,
-        command: data.command
-      }
+      const query = { platform: data.platform, guildId: data.guildId, userId: data.userId, command: data.command }
       const normalizedData = Utils.normalizeRecord(data, { sanitizeNames: true });
-      const userName = normalizedData.userName;
-      const guildName = normalizedData.guildName;
+      const [userName, guildName] = [normalizedData.userName, normalizedData.guildName];
       const [existing] = await ctx.database.get('analytics.stat', query)
       if (existing) {
-        const updateData: Partial<StatRecord> = {
-          count: existing.count + 1,
-          lastTime: new Date()
-        }
+        const updateData: Partial<StatRecord> = { count: existing.count + 1, lastTime: new Date() }
         if (userName !== undefined) updateData.userName = userName
         if (guildName !== undefined) updateData.guildName = guildName
         await ctx.database.set('analytics.stat', query, updateData)
       } else {
-        await ctx.database.create('analytics.stat', {
-          ...query,
-          userName,
-          guildName,
-          count: 1,
-          lastTime: new Date()
-        })
+        await ctx.database.create('analytics.stat', { ...query, userName, guildName, count: 1, lastTime: new Date() })
       }
-    } catch (e) {
-      ctx.logger.error('保存记录失败:', e, data)
-    }
+    } catch (e) { ctx.logger.error('保存记录失败:', e, data) }
   },
 
   /**
@@ -104,85 +64,62 @@ export const database = {
       .option('platform', '-p [platform:string] 指定平台')
       .option('guild', '-g [guild:string] 指定群组')
       .option('command', '-c [command:string] 指定命令')
-      .option('below', '-b [count:number] 少于指定次数', { fallback: 0 })
-      .option('time', '-t [days:number] 指定天数之前', { fallback: 0 })
-      .option('rank', '-r 同时清除排行榜数据')
+      .option('below', '-b [count:number] 少于指定次数')
+      .option('time', '-t [days:number] 指定天数之前')
+      .option('rank', '-r 只删除排行数据')
       .action(async ({ options }) => {
-        // 转换选项键名以匹配数据库字段名
-        const cleanOptions = {
-          userId: options.user,
-          platform: options.platform,
-          guildId: options.guild,
-          command: options.command
+        const cleanOptions = { userId: options.user, platform: options.platform,
+                              guildId: options.guild, command: options.command }
+        if (options.rank && ctx.database.tables['analytics.rank']) {
+          await ctx.database.drop('analytics.rank')
+          await this.initializeRankTable(ctx)
+          return '已删除所有排行记录'
         }
-        // 检查是否没有指定任何条件
         if (!options.below && !options.time && !Object.values(cleanOptions).some(Boolean)) {
-          ctx.logger.info('正在删除所有统计记录并重建数据表...')
+          ctx.logger.info('正在删除所有记录并重建数据表...')
           await ctx.database.drop('analytics.stat')
-          // 如果rank选项开启且rank表存在，重建rank表
-          if (options.rank && ctx.database.tables['analytics.rank']) {
+          if (ctx.database.tables['analytics.rank']) {
             await ctx.database.drop('analytics.rank')
             await this.initializeRankTable(ctx)
           }
           await this.initialize(ctx)
-          ctx.logger.info('已删除所有统计记录')
-          return '已删除所有统计记录' + (options.rank ? '和排行记录' : '')
+          ctx.logger.info('已删除所有记录')
+          return '已删除所有记录'
         }
-        // 在删除前查询以获取用户和群组的昵称
-        let userName = '', guildName = ''
+        let [userName, guildName] = ['', '']
         if (options.user) {
           const userRecords = await ctx.database.get('analytics.stat', { userId: options.user })
-          const userRecord = userRecords.find(r => r.userName)
-          userName = userRecord?.userName || ''
+          userName = userRecords.find(r => r.userName)?.userName
         }
         if (options.guild) {
           const guildRecords = await ctx.database.get('analytics.stat', { guildId: options.guild })
-          const guildRecord = guildRecords.find(r => r.guildName)
-          guildName = guildRecord?.guildName || ''
+          guildName = guildRecords.find(r => r.guildName)?.guildName
         }
-        // 构建查询条件
-        const query: any = Object.fromEntries(
-          Object.entries(cleanOptions).filter(([_, value]) => Boolean(value))
-        );
-        // 添加记录数阈值条件
-        if (options.below > 0) { query.count = { $lt: options.below } }
-        // 添加时间阈值条件
+        const query: any = Object.fromEntries(Object.entries(cleanOptions).filter(([_, v]) => Boolean(v)));
+        if (options.below > 0) query.count = { $lt: options.below };
         if (options.time > 0) {
           const cutoffDate = new Date();
           cutoffDate.setDate(cutoffDate.getDate() - options.time);
           query.lastTime = { $lt: cutoffDate };
         }
-        // 统计将要删除的记录数
         const recordsToDelete = await ctx.database.get('analytics.stat', query, ['id'])
         const deleteCount = recordsToDelete.length
-        // 如果需要同时清除排行榜数据，先删除关联的排行榜记录
-        if (options.rank && ctx.database.tables['analytics.rank'] && recordsToDelete.length > 0) {
-          const statIds = recordsToDelete.map(record => record.id)
-          await ctx.database.remove('analytics.rank', { stat: { $in: statIds } })
+        if (ctx.database.tables['analytics.rank'] && deleteCount > 0) {
+          await ctx.database.remove('analytics.rank', { stat: { $in: recordsToDelete.map(r => r.id) } })
         }
-        // 执行删除操作
         await ctx.database.remove('analytics.stat', query)
-        // 构建条件描述
         const conditions = Utils.buildConditions({
           user: options.user ? (userName || options.user) : null,
           guild: options.guild ? (guildName || options.guild) : null,
-          platform: options.platform,
-          command: options.command
+          platform: options.platform, command: options.command
         })
         const thresholdConditions = [
           options.below > 0 && `少于${options.below}次`,
           options.time > 0 && `在${options.time}天前`
         ].filter(Boolean);
-        // 组装最终消息
-        let message = '已删除';
-        message += conditions.length ? `${conditions.join('、')}的` : '所有';
-        if (thresholdConditions.length) {
-          message += `${thresholdConditions.join('且')}的`;
-        }
-        message += `统计记录（共${deleteCount}条）`;
-        if (options.rank && ctx.database.tables['analytics.rank']) {
-          message += '和相关排行记录';
-        }
+        let message = '已删除' + (conditions.length ? `${conditions.join('、')}的` : '所有');
+        if (thresholdConditions.length) message += `${thresholdConditions.join('且')}的`;
+        message += `记录（共${deleteCount}条）`;
         return message;
       })
   }

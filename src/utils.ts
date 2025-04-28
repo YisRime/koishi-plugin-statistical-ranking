@@ -1,22 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 
-/**
- * 通用工具函数集合
- * 提供字符串处理、时间格式化、文件操作等基础功能
- */
 export const Utils = {
-  /**
-   * 获取字符串显示宽度（中文字符计为2，其他字符计为1）
-   * @param {string} str - 输入字符串
-   * @returns {number} 字符串显示宽度
-   */
-  getStringDisplayWidth(str: string): number {
-    if (!str) return 0
-    return Array.from(str).reduce((w, c) =>
-      w + (/[\u3000-\u9fff\uff01-\uff60\u2E80-\u2FDF\u3040-\u30FF\u2600-\u26FF\u2700-\u27BF]/.test(c) ? 2 : 1), 0)
-  },
-
   /**
    * 按显示宽度截断字符串
    * @param {string} str - 输入字符串
@@ -29,8 +14,7 @@ export const Utils = {
     for (const char of Array.from(str)) {
       const charWidth = /[\u3000-\u9fff\uff01-\uff60\u2E80-\u2FDF\u3040-\u30FF\u2600-\u26FF\u2700-\u27BF]/.test(char) ? 2 : 1
       if (width + charWidth > maxWidth) break
-      width += charWidth
-      result += char
+      width += charWidth; result += char
     }
     return result
   },
@@ -43,11 +27,8 @@ export const Utils = {
   sanitizeString(input: string): string {
     if (input == null) return ''
     return String(input)
-      // 移除控制字符和零宽字符
       .replace(/[\x00-\x1F\x7F\u200B-\u200F\u2028-\u202F\uFEFF]/g, '')
-      // 简化连续重复的字符
       .replace(/(.)\1{5,}/g, '$1$1$1…')
-      // 替换可能导致数据库问题的字符
       .replace(/[<>`$()[\]{};'"\\\=]/g, '')
       .replace(/\s+/g, ' ').trim()
       .slice(0, 64)
@@ -63,15 +44,10 @@ export const Utils = {
     const diff = Date.now() - date.getTime()
     if (Math.abs(diff) < 3000) return (diff < 0 ? '一会后' : '一会前')
     const units: [number, string][] = [
-      [31536000000, '年'],
-      [2592000000, '月'],
-      [86400000, '天'],
-      [3600000, '时'],
-      [60000, '分'],
-      [1000, '秒']
+      [31536000000, '年'], [2592000000, '月'], [86400000, '天'],
+      [3600000, '时'], [60000, '分'], [1000, '秒']
     ]
-    const absDiff = Math.abs(diff)
-    const suffix = diff < 0 ? '后' : '前'
+    const absDiff = Math.abs(diff), suffix = diff < 0 ? '后' : '前'
     for (let i = 0; i < units.length; i++) {
       const [primaryDiv, primaryUnit] = units[i]
       if (absDiff < primaryDiv) continue
@@ -80,9 +56,7 @@ export const Utils = {
         const [secondaryDiv, secondaryUnit] = units[i + 1]
         const remainder = absDiff % primaryDiv
         const secondaryVal = Math.floor(remainder / secondaryDiv)
-        if (secondaryVal > 0) {
-          return `${primaryVal}${primaryUnit}${secondaryVal}${secondaryUnit}${suffix}`
-        }
+        if (secondaryVal > 0) return `${primaryVal}${primaryUnit}${secondaryVal}${secondaryUnit}${suffix}`
       }
       return `${primaryVal}${primaryUnit}${suffix}`
     }
@@ -111,9 +85,7 @@ export const Utils = {
    */
   getDataDirectory(subdir: string = 'statistical-ranking'): string {
     const dataDir = path.join(process.cwd(), 'data', subdir)
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true })
-    }
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
     return dataDir
   },
 
@@ -126,13 +98,10 @@ export const Utils = {
     if (!session?.userId || !session?.platform || !session?.app?.database) return session?.userId
     try {
       const [binding] = await session.app.database.get('binding', {
-        aid: session.userId,
-        platform: session.platform
+        aid: session.userId, platform: session.platform
       })
       return binding?.pid ?? session.userId
-    } catch {
-      return session.userId
-    }
+    } catch { return session.userId }
   },
 
   /**
@@ -144,7 +113,7 @@ export const Utils = {
   async getSessionInfo(session: any) {
     if (!session) return null
     const platform = session.platform
-    const guildId = session.guildId || session.groupId || session.channelId || 'private'
+    const guildId = session.guildId || session.groupId || session.channelId
     const userId = await this.getPlatformId(session)
     const bot = session.bot
     let userName = '', guildName = ''
@@ -158,9 +127,7 @@ export const Utils = {
       guildName = guild?.name
     }
     return {
-      platform,
-      guildId,
-      userId,
+      platform, guildId, userId,
       userName: this.sanitizeString(userName),
       guildName: this.sanitizeString(guildName)
     }
@@ -188,14 +155,10 @@ export const Utils = {
    * @param {Object} options - 包含可能的条件的对象
    * @returns {string[]} 条件描述数组
    */
-  buildConditions(options: {
-    user?: string, guild?: string, platform?: string, command?: string
-  }): string[] {
+  buildConditions(options: { user?: string, guild?: string, platform?: string, command?: string }): string[] {
     return Object.entries({
-      user: ['用户', options.user],
-      guild: ['群组', options.guild],
-      platform: ['平台', options.platform],
-      command: ['命令', options.command]
+      user: ['用户', options.user], guild: ['群组', options.guild],
+      platform: ['平台', options.platform], command: ['命令', options.command]
     }).filter(([_, [__, value]]) => value).map(([_, [label, value]]) => `${label}${value}`)
   },
 
@@ -208,21 +171,11 @@ export const Utils = {
   normalizeRecord(record: any, options: { sanitizeNames?: boolean } = {}): any {
     const result = { ...record };
     if (options.sanitizeNames) {
-      if (result.userName) {
-        result.userName = this.sanitizeString(result.userName);
-      }
-      if (result.guildName) {
-        result.guildName = this.sanitizeString(result.guildName);
-      }
+      if (result.userName) result.userName = this.sanitizeString(result.userName);
+      if (result.guildName) result.guildName = this.sanitizeString(result.guildName);
     }
-    // 确保时间字段是Date对象
-    if (result.lastTime && !(result.lastTime instanceof Date)) {
-      result.lastTime = new Date(result.lastTime);
-    }
-    // 确保计数是数字
-    if (result.count && typeof result.count !== 'number') {
-      result.count = parseInt(String(result.count)) || 1;
-    }
+    if (result.lastTime && !(result.lastTime instanceof Date)) result.lastTime = new Date(result.lastTime);
+    if (result.count && typeof result.count !== 'number') result.count = parseInt(String(result.count)) || 1;
     return result;
   },
 
@@ -236,24 +189,14 @@ export const Utils = {
   generateStatsMap(records: any[], keyField: string, keyFormatter?: (key: string) => string): Map<string, any> {
     const dataMap = new Map<string, {count: number, lastTime: Date, displayName?: string}>();
     records.forEach(record => {
-      const recordKey = record[keyField];
-      if (!recordKey) return;
+      const recordKey = record[keyField]; if (!recordKey) return;
       const formattedKey = keyFormatter ? keyFormatter(recordKey) : recordKey;
       let displayName = formattedKey;
-      if (keyField === 'userId' && record.userName) {
-        displayName = record.userName;
-      } else if (keyField === 'guildId' && record.guildName) {
-        displayName = record.guildName;
-      }
-      const current = dataMap.get(formattedKey) || {
-        count: 0,
-        lastTime: record.lastTime,
-        displayName
-      };
+      if (keyField === 'userId' && record.userName) displayName = record.userName;
+      else if (keyField === 'guildId' && record.guildName) displayName = record.guildName;
+      const current = dataMap.get(formattedKey) || { count: 0, lastTime: record.lastTime, displayName };
       current.count += record.count;
-      if (record.lastTime > current.lastTime) {
-        current.lastTime = record.lastTime;
-      }
+      if (record.lastTime > current.lastTime) current.lastTime = record.lastTime;
       dataMap.set(formattedKey, current);
     });
     return dataMap;
@@ -266,32 +209,16 @@ export const Utils = {
    * @returns {Array<any>} 过滤后的记录
    */
   filterStatRecords(records: any[], options: {
-    keyField?: string,
-    displayWhitelist?: string[],
-    displayBlacklist?: string[],
-    disableCommandMerge?: boolean
+    keyField?: string, displayWhitelist?: string[],
+    displayBlacklist?: string[], disableCommandMerge?: boolean
   } = {}): any[] {
-    const {
-      keyField = 'command',
-      displayWhitelist = [],
-      displayBlacklist = [],
-      disableCommandMerge = false
-    } = options;
+    const { keyField = 'command', displayWhitelist = [], displayBlacklist = [], disableCommandMerge = false } = options;
     let filteredRecords = records;
-    // 按命令类型过滤
-    if (keyField === 'command' && !disableCommandMerge) {
-      filteredRecords = records.filter(r => r.command !== '_message');
-    }
-    // 应用白名单和黑名单
+    if (keyField === 'command' && !disableCommandMerge) filteredRecords = records.filter(r => r.command !== '_message');
     if (displayWhitelist.length || displayBlacklist.length) {
       filteredRecords = filteredRecords.filter(record => {
-        const key = record[keyField];
-        if (!key) return false;
-        // 白名单优先
-        if (displayWhitelist.length) {
-          return displayWhitelist.some(pattern => key.includes(pattern));
-        }
-        // 黑名单过滤
+        const key = record[keyField]; if (!key) return false;
+        if (displayWhitelist.length) return displayWhitelist.some(pattern => key.includes(pattern));
         return !displayBlacklist.some(pattern => key.includes(pattern));
       });
     }
@@ -308,9 +235,7 @@ export const Utils = {
   sortData(data: any[], sortBy: string = 'count', keyField: string = 'key'): any[] {
     return [...data].sort((a, b) => {
       if (sortBy === 'count') return b.count - a.count;
-      if (sortBy === 'time' && a.lastTime && b.lastTime) {
-        return new Date(b.lastTime).getTime() - new Date(a.lastTime).getTime();
-      }
+      if (sortBy === 'time' && a.lastTime && b.lastTime) return new Date(b.lastTime).getTime() - new Date(a.lastTime).getTime();
       return a[keyField].localeCompare(b[keyField]);
     });
   },
@@ -323,9 +248,9 @@ export const Utils = {
    * @returns {string} 格式化后的名称
    */
   formatDisplayName(name: string, id: string, truncateId: boolean = false): string {
-    if (!name) return id || '';
+    if (!name) return id;
     const cleanName = this.sanitizeString(name);
-    if (!cleanName || /^[\s*□]+$/.test(cleanName)) return id || '';
+    if (!cleanName || /^[\s*□]+$/.test(cleanName)) return id;
     if (truncateId || cleanName === id || cleanName.includes(id)) return cleanName
     return `${cleanName} (${id})`;
   },
@@ -340,17 +265,13 @@ export const Utils = {
     const totalRows = data.length;
     const normalPageCount = Math.ceil(totalRows / 200);
     const lastPageRows = totalRows - (normalPageCount - 1) * 200;
-    const actualPageCount = lastPageRows < 50 && normalPageCount > 1
-      ? normalPageCount - 1
-      : normalPageCount;
+    const actualPageCount = lastPageRows < 50 && normalPageCount > 1 ? normalPageCount - 1 : normalPageCount;
     if (actualPageCount <= 1) return [data];
     const mainPageSize = Math.ceil(totalRows / actualPageCount);
     const pages: T[][] = [];
     let currentIdx = 0;
     for (let i = 0; i < actualPageCount; i++) {
-      const pageSize = i === actualPageCount - 1
-        ? totalRows - currentIdx
-        : mainPageSize;
+      const pageSize = i === actualPageCount - 1 ? totalRows - currentIdx : mainPageSize;
       pages.push(data.slice(currentIdx, currentIdx + pageSize));
       currentIdx += pageSize;
     }

@@ -4,10 +4,6 @@ import { StatProcessOptions } from './stat'
 import { StatRecord } from './index'
 import { Utils } from './utils'
 
-/**
- * 统计数据渲染类
- * 负责将统计数据渲染为可视化图表
- */
 export class Renderer {
   private ctx: Context
 
@@ -26,11 +22,7 @@ export class Renderer {
     let page = null
     try {
       page = await this.ctx.puppeteer.page()
-      await page.setViewport({
-        width: 720,
-        height: 1080,
-        deviceScaleFactor: 2.0
-      })
+      await page.setViewport({ width: 720, height: 1080, deviceScaleFactor: 2.0 })
       await page.setDefaultNavigationTimeout(30000)
       await page.setDefaultTimeout(30000)
       await page.setContent(`
@@ -40,72 +32,15 @@ export class Renderer {
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
-              body {
-                margin: 0;
-                padding: 0;
-                font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
-                background: transparent;
-                color: rgba(0, 0, 0, 0.87);
-                font-size: 14px;
-                line-height: 1.4;
-                -webkit-font-smoothing: antialiased;
-              }
-              table {
-                width: 100%;
-                table-layout: auto;
-                border-collapse: separate;
-                border-spacing: 0;
-                overflow: hidden;
-              }
-              h2, h3 {
-                margin: 0;
-                letter-spacing: 0.5px;
-                font-weight: 500;
-              }
-              .material-card {
-                border-radius: 10px;
-                overflow: hidden;
-                background-color: #fff;
-                box-shadow: 0 2px 4px -1px rgba(0,0,0,0.2),
-                            0 4px 5px 0 rgba(0,0,0,0.14),
-                            0 1px 10px 0 rgba(0,0,0,0.12);
-                margin: 4px;
-                padding: 12px;
-              }
-              .stat-chip {
-                padding: 0 10px;
-                height: 28px;
-                display: inline-flex;
-                align-items: center;
-                border-radius: 14px;
-                font-size: 14px;
-                line-height: 28px;
-                background-color: rgba(0, 0, 0, 0.06);
-                color: rgba(0, 0, 0, 0.87);
-                white-space: nowrap;
-              }
-              .stat-table th {
-                font-weight: 500;
-                color: white;
-                padding: 8px 12px;
-                position: sticky;
-                top: 0;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-              }
-              .stat-table td {
-                padding: 6px 12px;
-                border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-                position: relative;
-              }
-              .highlight-row td {
-                background-color: rgba(33, 150, 243, 0.03);
-                font-weight: 500;
-              }
-              .table-container {
-                border-radius: 8px;
-                overflow: hidden;
-                border: 1px solid rgba(0, 0, 0, 0.06);
-              }
+              body { margin: 0; padding: 0; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: transparent; color: rgba(0, 0, 0, 0.87); font-size: 14px; line-height: 1.4; -webkit-font-smoothing: antialiased; }
+              table { width: 100%; table-layout: auto; border-collapse: separate; border-spacing: 0; overflow: hidden; }
+              h2, h3 { margin: 0; letter-spacing: 0.5px; font-weight: 500; }
+              .material-card { border-radius: 10px; overflow: hidden; background-color: #fff; box-shadow: 0 2px 4px -1px rgba(0,0,0,0.2), 0 4px 5px 0 rgba(0,0,0,0.14), 0 1px 10px 0 rgba(0,0,0,0.12); margin: 4px; padding: 12px; }
+              .stat-chip { padding: 0 10px; height: 28px; display: inline-flex; align-items: center; border-radius: 14px; font-size: 14px; line-height: 28px; background-color: rgba(0, 0, 0, 0.06); color: rgba(0, 0, 0, 0.87); white-space: nowrap; }
+              .stat-table th { font-weight: 500; color: white; padding: 8px 12px; position: sticky; top: 0; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+              .stat-table td { padding: 6px 12px; border-bottom: 1px solid rgba(0, 0, 0, 0.04); position: relative; }
+              .highlight-row td { background-color: rgba(33, 150, 243, 0.03); font-weight: 500; }
+              .table-container { border-radius: 8px; overflow: hidden; border: 1px solid rgba(0, 0, 0, 0.06); }
             </style>
           </head>
           <body>${html}</body>
@@ -113,42 +48,29 @@ export class Renderer {
       `, { waitUntil: 'networkidle0' })
       const dimensions = await page.evaluate(() => {
         const contentWidth = Math.max(
-          document.body.scrollWidth,
-          document.body.offsetWidth,
-          document.documentElement.clientWidth,
-          document.documentElement.scrollWidth,
+          document.body.scrollWidth, document.body.offsetWidth,
+          document.documentElement.clientWidth, document.documentElement.scrollWidth,
           document.documentElement.offsetWidth
         );
         const contentHeight = document.body.scrollHeight;
         return { width: contentWidth, height: contentHeight };
       });
-      await page.setViewport({
-        width: dimensions.width,
-        height: dimensions.height,
-        deviceScaleFactor: 2.0
-      });
+      await page.setViewport({ width: dimensions.width, height: dimensions.height, deviceScaleFactor: 2.0 });
       await page.evaluate(() => {
         const imgPromises = Array.from(document.querySelectorAll('img'))
           .map(img => img.complete ? Promise.resolve() :
                new Promise(resolve => {
                  img.addEventListener('load', resolve);
                  img.addEventListener('error', resolve);
-               })
-          );
+               }));
         return Promise.all(imgPromises);
       });
-      return await page.screenshot({
-        type: 'png',
-        fullPage: true,
-        omitBackground: true
-      });
+      return await page.screenshot({ type: 'png', fullPage: true, omitBackground: true });
     } catch (error) {
       this.ctx.logger.error('图片渲染出错:', error)
       throw new Error(`图片渲染出错: ${error.message || '未知错误'}`)
     } finally {
-      if (page) {
-        await page.close().catch(() => {})
-      }
+      if (page) await page.close().catch(() => {})
     }
   }
 
@@ -160,27 +82,16 @@ export class Renderer {
    * @returns {Array<{name: string, value: number, time: string, rawTime: Date}>} 转换后的图表数据
    */
   recordsToChartData(records: StatRecord[], key: keyof StatRecord, options: StatProcessOptions = {}): Array<{name: string, value: number, time: string, rawTime: Date}> {
-    const {
-      sortBy = 'count',
-      disableCommandMerge = false,
-      truncateId = false,
-      displayBlacklist = [],
-      displayWhitelist = []
-    } = options;
+    const { sortBy = 'count', disableCommandMerge = false, truncateId = false,
+            displayBlacklist = [], displayWhitelist = [] } = options;
     const filteredRecords = Utils.filterStatRecords(records, {
-      keyField: key as string,
-      displayWhitelist,
-      displayBlacklist,
-      disableCommandMerge
+      keyField: key as string, displayWhitelist, displayBlacklist, disableCommandMerge
     });
-    const keyFormatter = (key === 'command' && !disableCommandMerge)
-      ? (k: string) => k?.split('.')[0] || '' : undefined;
+    const keyFormatter = (key === 'command' && !disableCommandMerge) ? (k: string) => k?.split('.')[0] : undefined;
     const dataMap = Utils.generateStatsMap(filteredRecords, key as string, keyFormatter);
     let chartData = Array.from(dataMap.entries()).map(([key, data]) => ({
       name: Utils.formatDisplayName(data.displayName, key, truncateId),
-      value: data.count,
-      time: Utils.formatTimeAgo(data.lastTime),
-      rawTime: data.lastTime
+      value: data.count, time: Utils.formatTimeAgo(data.lastTime), rawTime: data.lastTime
     }));
     // 排序
     chartData.sort((a, b) => {
@@ -199,17 +110,9 @@ export class Renderer {
    * @param {StatProcessOptions} options - 处理选项
    * @returns {Promise<Buffer[]>} 生成的图片Buffer数组
    */
-  async generateStatImage(
-    records: StatRecord[],
-    key: keyof StatRecord,
-    title: string,
-    options: StatProcessOptions = {}
-  ): Promise<Buffer[]> {
+  async generateStatImage(records: StatRecord[], key: keyof StatRecord, title: string, options: StatProcessOptions = {}): Promise<Buffer[]> {
     const chartData = this.recordsToChartData(records, key, options);
-    const headerColor =
-      key === 'userId' ? '#9C27B0' :
-      key === 'guildId' ? '#4CAF50' :
-      '#2196F3';
+    const headerColor = key === 'userId' ? '#9C27B0' : key === 'guildId' ? '#4CAF50' : '#2196F3';
     const pages = Utils.paginateArray(chartData);
     const results: Buffer[] = [];
     const currentTime = Utils.formatDateTime(new Date());

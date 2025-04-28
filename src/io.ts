@@ -5,9 +5,6 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { Rank } from './rank'
 
-/**
- * 统计数据导入导出工具集
- */
 export const io = {
   rankInstance: null as Rank | null,
 
@@ -27,37 +24,23 @@ export const io = {
   async exportToFile(ctx: Context, filename: string, options: {
     userId?: string, platform?: string, guildId?: string, command?: string, batchSize?: number
   }) {
-    const query = Object.fromEntries(
-      Object.entries({...options, batchSize: undefined})
-        .filter(([_, value]) => Boolean(value))
-    );
+    const query = Object.fromEntries(Object.entries({...options, batchSize: undefined}).filter(([_, v]) => Boolean(v)));
     const records = await ctx.database.get('analytics.stat', query)
     if (!records.length) throw new Error('历史数据为空')
     const timestamp = new Date().toISOString().replace(/[:T.]/g, '-').substring(0, 19)
-    const batchSize = options.batchSize || 200
-    const totalRecords = records.length
-    const batches = Math.ceil(totalRecords / batchSize)
-    const exportFiles = []
+    const batchSize = options.batchSize || 200, totalRecords = records.length
+    const batches = Math.ceil(totalRecords / batchSize), exportFiles = []
     const statDir = Utils.getDataDirectory()
     for (let batch = 0; batch < batches; batch++) {
-      const start = batch * batchSize
-      const end = Math.min((batch + 1) * batchSize, totalRecords)
+      const start = batch * batchSize, end = Math.min((batch + 1) * batchSize, totalRecords)
       const batchRecords = records.slice(start, end)
-      const outputFilename = batches === 1
-        ? `${filename}-${timestamp}.json`
+      const outputFilename = batches === 1 ? `${filename}-${timestamp}.json`
         : `${filename}-${timestamp}-${batches}-${batch+1}.json`
       const filePath = path.join(statDir, outputFilename)
-      fs.writeFileSync(
-        filePath,
-        JSON.stringify(batchRecords.map(({ id, ...rest }) => rest), null, 2),
-        'utf-8'
-      )
+      fs.writeFileSync(filePath, JSON.stringify(batchRecords.map(({ id, ...rest }) => rest), null, 2), 'utf-8')
       exportFiles.push({
-        count: batchRecords.length,
-        path: filePath,
-        filename: outputFilename,
-        batch: batch + 1,
-        totalBatches: batches
+        count: batchRecords.length, path: filePath, filename: outputFilename,
+        batch: batch + 1, totalBatches: batches
       })
     }
     return { count: totalRecords, batches, files: exportFiles }
@@ -70,31 +53,20 @@ export const io = {
   async listImportFiles() {
     const statDir = Utils.getDataDirectory()
     const files = await fs.promises.readdir(statDir)
-    const statFiles = files.filter(file =>
-      file.endsWith('.json') && (file.includes('stat') || file.includes('analytics'))
-    )
+    const statFiles = files.filter(file => file.endsWith('.json') && (file.includes('stat') || file.includes('analytics')))
     if (!statFiles.length) return { files: [], fileInfo: {} }
-    const fileInfo = {}
-    const batchGroups = new Map()
+    const fileInfo = {}, batchGroups = new Map()
     // 处理文件信息
     for (const file of statFiles) {
       const stats = await fs.promises.stat(path.join(statDir, file))
-      const batchMatch = file.match(/(.*)-(\d+)-(\d+)\.json$/)
-      const isBatch = !!batchMatch
+      const batchMatch = file.match(/(.*)-(\d+)-(\d+)\.json$/), isBatch = !!batchMatch
       fileInfo[file] = {
-        mtime: stats.mtime.toLocaleString(),
-        timestamp: stats.mtime.getTime(),
-        isBatch,
-        batchInfo: isBatch ? {
-          base: batchMatch[1],
-          total: parseInt(batchMatch[2]),
-          current: parseInt(batchMatch[3])
-        } : undefined
+        mtime: stats.mtime.toLocaleString(), timestamp: stats.mtime.getTime(), isBatch,
+        batchInfo: isBatch ? { base: batchMatch[1], total: parseInt(batchMatch[2]), current: parseInt(batchMatch[3]) } : undefined
       }
       // 收集批次组
       if (isBatch) {
-        const [, base, total, ] = batchMatch
-        const key = `${base}-total${total}`
+        const [, base, total] = batchMatch, key = `${base}-total${total}`
         if (!batchGroups.has(key)) batchGroups.set(key, [])
         batchGroups.get(key).push(file)
       }
@@ -103,29 +75,18 @@ export const io = {
     const batchGroupFiles = []
     for (const [, files] of batchGroups.entries()) {
       if (files.length <= 1) continue
-      const firstFile = files[0]
-      const groupInfo = firstFile.match(/(.*)-(\d+)-(\d+)\.json$/)
+      const firstFile = files[0], groupInfo = firstFile.match(/(.*)-(\d+)-(\d+)\.json$/)
       if (!groupInfo) continue
-      const [, base, total, ] = groupInfo
-      const groupName = `${base}(N=${total})`
+      const [, base, total] = groupInfo, groupName = `${base}(N=${total})`
       fileInfo[groupName] = {
         mtime: new Date(Math.max(...files.map(f => fileInfo[f].timestamp))).toLocaleString(),
         timestamp: Math.max(...files.map(f => fileInfo[f].timestamp)),
-        isBatch: true,
-        isGroup: true,
+        isBatch: true, isGroup: true,
         batchInfo: {
-          base,
-          total: parseInt(total),
+          base, total: parseInt(total),
           files: files.sort((a, b) => {
-            const aMatch = a.match(/-(\d+)-(\d+)/)
-            const bMatch = b.match(/-(\d+)-(\d+)/)
-            if (aMatch && bMatch) {
-              // 如果总批次相同则按当前批次排序
-              if (aMatch[1] === bMatch[1]) {
-                return parseInt(aMatch[2]) - parseInt(bMatch[2]);
-              }
-            }
-            return 0;
+            const [aMatch, bMatch] = [a.match(/-(\d+)-(\d+)/), b.match(/-(\d+)-(\d+)/)]
+            return (aMatch && bMatch && aMatch[1] === bMatch[1]) ? parseInt(aMatch[2]) - parseInt(bMatch[2]) : 0
           })
         }
       }
@@ -134,9 +95,7 @@ export const io = {
     // 排序文件列表
     const sortedFiles = [...batchGroupFiles, ...statFiles].sort((a, b) => {
       const aInfo = fileInfo[a], bInfo = fileInfo[b]
-      return aInfo.isGroup !== bInfo.isGroup
-        ? (aInfo.isGroup ? -1 : 1)
-        : (bInfo.timestamp - aInfo.timestamp)
+      return aInfo.isGroup !== bInfo.isGroup ? (aInfo.isGroup ? -1 : 1) : (bInfo.timestamp - aInfo.timestamp)
     })
     return { files: sortedFiles, fileInfo }
   },
@@ -155,44 +114,28 @@ export const io = {
     // 处理不同类型的文件名
     if (/^\d+-\d+$/.test(filename)) {
       const [groupIdx, fileIdx] = filename.split('-').map(Number)
-      const { files: filesList, fileInfo } = await this.listImportFiles(ctx)
+      const { files: filesList, fileInfo } = await this.listImportFiles()
       if (groupIdx < 1 || groupIdx > filesList.length || !filesList[groupIdx-1].includes('(N=') ||
-          !fileInfo[filesList[groupIdx-1]]?.batchInfo?.files ||
-          fileIdx < 1 || fileIdx > fileInfo[filesList[groupIdx-1]]?.batchInfo?.files.length) {
+          !fileInfo[filesList[groupIdx-1]]?.batchInfo?.files || fileIdx < 1 ||
+          fileIdx > fileInfo[filesList[groupIdx-1]]?.batchInfo?.files.length) {
         throw new Error(`文件序号无效`)
       }
-      const groupName = filesList[groupIdx-1]
-      const targetFile = fileInfo[groupName].batchInfo.files[fileIdx-1]
-      const targetPath = path.join(dataDir, targetFile)
-      if (fs.existsSync(targetPath)) {
-        files.push(targetFile)
-      }
-    }
-    else if (filename.includes('(N=')) {
-      const match = filename.match(/(.*)\(N=(\d+)\)$/)
+      const targetFile = fileInfo[filesList[groupIdx-1]].batchInfo.files[fileIdx-1]
+      if (fs.existsSync(path.join(dataDir, targetFile))) files.push(targetFile)
+    } else if (filename.includes('(N=')) {
+      const [, baseFilename, totalBatches] = filename.match(/(.*)\(N=(\d+)\)$/)
       // 收集批次文件
-      const [, baseFilename, totalBatches] = match
       for (let i = 1; i <= parseInt(totalBatches); i++) {
         const batchFile = `${baseFilename}-${totalBatches}-${i}.json`
-        const batchPath = path.join(dataDir, batchFile)
-        if (fs.existsSync(batchPath)) {
-          files.push(batchFile)
-        }
+        if (fs.existsSync(path.join(dataDir, batchFile))) files.push(batchFile)
       }
-    }
-    else {
+    } else {
       // 单个文件
       const fileToCheck = filename.endsWith('.json') ? filename : `${filename}.json`
-      const filePath = path.join(dataDir, fileToCheck)
-      if (fs.existsSync(filePath)) {
-        files.push(fileToCheck)
-      }
+      if (fs.existsSync(path.join(dataDir, fileToCheck))) files.push(fileToCheck)
     }
-    // 清除现有数据
-    if (overwrite) {
-      await ctx.database.remove('analytics.stat', {})
-    }
-    // 导入处理
+    // 清除现有数据并导入处理
+    if (overwrite) await ctx.database.remove('analytics.stat', {})
     let totalStats = { imported: 0, errors: 0, invalidRecords: 0 }
     for (let i = 0; i < files.length; i++) {
       const content = await fs.promises.readFile(path.join(dataDir, files[i]), 'utf-8')
@@ -204,14 +147,10 @@ export const io = {
     }
     const totalAttempted = totalStats.imported + totalStats.errors
     if (this.rankInstance && totalStats.imported > 0) {
-      try {
-        await this.rankInstance.generateRankSnapshot()
-      } catch (error) {
-        ctx.logger.error('更新排行失败:', error)
-      }
+      try { await this.rankInstance.generateRankSnapshot() }
+      catch (error) { ctx.logger.error('更新排行失败:', error) }
     }
-    return files.length === 1
-      ? `导入成功（${totalStats.imported}/${totalAttempted}条）`
+    return files.length === 1 ? `导入成功（${totalStats.imported}/${totalAttempted}条）`
       : `批量导入成功（${totalStats.imported}/${totalAttempted}条）`
   },
 
@@ -223,21 +162,16 @@ export const io = {
    * @throws {Error} 导入失败时抛出错误
    */
   async importLegacyData(ctx: Context, overwrite = false) {
-    if (!ctx.database.tables['analytics.command']) {throw new Error('无历史数据表')}
+    if (!ctx.database.tables['analytics.command']) throw new Error('无历史数据表')
     const [records, bindings] = await Promise.all([
       ctx.database.get('analytics.command', {}),
       ctx.database.get('binding', {})
     ])
     if (!records.length) throw new Error('历史数据为空')
-    if (overwrite) {
-      await ctx.database.remove('analytics.stat', {})
-    }
-    // 用户ID映射
-    const userIdMap = new Map(
-      bindings.filter(b => b.aid)
-        .map(b => [b.aid.toString(), { pid: b.pid, platform: b.platform }])
-    )
-    // 合并记录
+    if (overwrite) await ctx.database.remove('analytics.stat', {})
+    // 用户ID映射和合并记录
+    const userIdMap = new Map(bindings.filter(b => b.aid)
+      .map(b => [b.aid.toString(), { pid: b.pid, platform: b.platform }]))
     const mergedRecords = new Map()
     records.forEach(cmd => {
       const binding = userIdMap.get(cmd.userId?.toString())
@@ -247,14 +181,8 @@ export const io = {
       const timestamp = new Date((cmd.date * 86400000) + ((cmd.hour || 0) * 3600000))
       if (isNaN(timestamp.getTime())) return
       const curr = mergedRecords.get(key) || {
-        platform: binding.platform,
-        guildId: cmd.channelId,
-        userId: binding.pid,
-        command: commandValue,
-        count: 0,
-        lastTime: timestamp,
-        userName: '',
-        guildName: ''
+        platform: binding.platform, guildId: cmd.channelId, userId: binding.pid,
+        command: commandValue, count: 0, lastTime: timestamp, userName: '', guildName: ''
       }
       curr.count += (cmd.count || 1)
       curr.lastTime = new Date(Math.max(curr.lastTime.getTime(), timestamp.getTime()))
@@ -262,14 +190,10 @@ export const io = {
     })
     const result = await this.importRecords(ctx, Array.from(mergedRecords.values()))
     if (this.rankInstance && result.imported > 0) {
-      try {
-        await this.rankInstance.generateRankSnapshot()
-      } catch (error) {
-        ctx.logger.error('更新排行失败:', error)
-      }
+      try { await this.rankInstance.generateRankSnapshot() }
+      catch (error) { ctx.logger.error('更新排行失败:', error) }
     }
-    const totalAttempted = result.imported + result.errors
-    return `导入成功（${result.imported}/${totalAttempted}条）`
+    return `导入成功（${result.imported}/${result.imported + result.errors}条）`
   },
 
   /**
@@ -281,30 +205,21 @@ export const io = {
   parseJSON(content: string) {
     try {
       const data = JSON.parse(content)
-      let invalidRecords = 0
-      const validRecords = []
+      let invalidRecords = 0, validRecords = []
       for (const record of data) {
         if (!record.platform || !record.guildId || !record.userId || !record.command) {
-          invalidRecords++
-          continue
+          invalidRecords++; continue
         }
         const { id, ...rest } = record
         validRecords.push(Utils.normalizeRecord({
-          ...rest,
-          platform: rest.platform,
-          guildId: rest.guildId,
-          userId: rest.userId,
-          userName: rest.userName ?? '',
-          guildName: rest.guildName ?? '',
-          command: rest.command,
+          ...rest, platform: rest.platform, guildId: rest.guildId, userId: rest.userId,
+          userName: rest.userName, guildName: rest.guildName, command: rest.command,
           count: parseInt(String(rest.count)) || 1,
           lastTime: rest.lastTime ? new Date(rest.lastTime) : new Date()
         }, { sanitizeNames: true }))
       }
       return { validRecords, totalRecords: data.length, invalidRecords }
-    } catch (error) {
-      throw new Error(error.message)
-    }
+    } catch (error) { throw new Error(error.message) }
   },
 
   /**
@@ -321,45 +236,38 @@ export const io = {
       const batch = records.slice(i, i + batchSize)
       await Promise.all(batch.map(async record => {
         const query = {
-          platform: record.platform,
-          guildId: record.guildId,
-          userId: record.userId,
-          command: record.command
+          platform: record.platform, guildId: record.guildId,
+          userId: record.userId, command: record.command
         }
         try {
           const [existing] = await ctx.database.get('analytics.stat', query)
           if (existing) {
             // 更新现有记录
-            const existingUserName = existing.userName?.trim() || '';
-            const recordUserName = Utils.sanitizeString(record.userName || '');
+            const existingUserName = existing.userName?.trim();
+            const recordUserName = Utils.sanitizeString(record.userName);
             const newUserName = existingUserName && recordUserName
               ? (record.lastTime > existing.lastTime ? recordUserName : existingUserName)
               : (existingUserName || recordUserName);
-            const existingGuildName = existing.guildName?.trim() || '';
-            const recordGuildName = Utils.sanitizeString(record.guildName || '');
+            const existingGuildName = existing.guildName?.trim();
+            const recordGuildName = Utils.sanitizeString(record.guildName);
             const newGuildName = existingGuildName && recordGuildName
               ? (record.lastTime > existing.lastTime ? recordGuildName : existingGuildName)
               : (existingGuildName || recordGuildName);
             await ctx.database.set('analytics.stat', query, {
               count: existing.count + (record.count || 1),
               lastTime: record.lastTime > existing.lastTime ? record.lastTime : existing.lastTime,
-              userName: newUserName,
-              guildName: newGuildName
+              userName: newUserName, guildName: newGuildName
             })
           } else {
             // 创建新记录
             await ctx.database.create('analytics.stat', {
-              ...query,
-              count: record.count || 1,
-              lastTime: record.lastTime || new Date(),
-              userName: Utils.sanitizeString(record.userName || ''),
-              guildName: Utils.sanitizeString(record.guildName || '')
+              ...query, count: record.count || 1, lastTime: record.lastTime || new Date(),
+              userName: Utils.sanitizeString(record.userName),
+              guildName: Utils.sanitizeString(record.guildName)
             })
           }
           imported++
-        } catch (e) {
-          errors++
-        }
+        } catch (e) { errors++ }
       }))
     }
     return { imported, errors }
@@ -372,9 +280,7 @@ export const io = {
    * @param {Rank} [rank] 排行榜实例，用于导入后更新排行
    */
   registerCommands(ctx: Context, parent: any, rank?: Rank) {
-    if (rank) {
-      this.rankInstance = rank;
-    }
+    if (rank) this.rankInstance = rank;
     parent.subcommand('.export', '导出统计数据', { authority: 4 })
       .option('user', '-u [user:string] 指定用户')
       .option('platform', '-p [platform:string] 指定平台')
@@ -382,48 +288,29 @@ export const io = {
       .option('command', '-c [command:string] 指定命令')
       .action(async ({ options, session }) => {
         try {
-          // 发送进度提示
-          if (Object.values(options).some(Boolean)) {
-            await session.send('正在导出...')
-          }
-          // 执行导出
+          if (Object.values(options).some(Boolean)) await session.send('正在导出...')
           const result = await this.exportToFile(ctx, 'stat', {
-            userId: options.user,
-            platform: options.platform,
-            guildId: options.guild,
-            command: options.command
+            userId: options.user, platform: options.platform,
+            guildId: options.guild, command: options.command
           })
-          // 返回导出结果消息
-          if (result.batches === 1) {
-            return `导出成功（${result.count}条）：\n- ${result.files[0].filename}`
-          } else {
-            const fileList = result.files.map(f => `- ${f.filename}`).join('\n')
-            return `导出成功（${result.count}条）：\n${fileList}`
-          }
-        } catch (e) {
-          return `导出失败：${e.message}`
-        }
+          return result.batches === 1
+            ? `导出成功（${result.count}条）：\n- ${result.files[0].filename}`
+            : `导出成功（${result.count}条）：\n${result.files.map(f => `- ${f.filename}`).join('\n')}`
+        } catch (e) { return `导出失败：${e.message}` }
       })
+
     parent.subcommand('.import [selector:number]', '导入统计数据', { authority: 4 })
       .option('force', '-f 覆盖现有数据')
       .option('database', '-d 从历史数据库导入')
       .action(async ({ session, options, args }) => {
         try {
-          // 从历史数据库导入
           if (options.database) {
             session.send('正在导入历史记录...')
-            try {
-              return await this.importLegacyData(ctx, options.force)
-            } catch (e) {
-              return e.message
-            }
+            try { return await this.importLegacyData(ctx, options.force) }
+            catch (e) { return e.message }
           }
-          // 获取可导入文件列表
           const { files, fileInfo } = await this.listImportFiles()
-          if (!files.length) {
-            return '未找到历史记录文件'
-          }
-          // 使用序号选择文件导入
+          if (!files.length) return '未找到历史记录文件'
           const selector = args[0]
           if (selector) {
             if (selector > 0 && selector <= files.length) {
@@ -433,21 +320,15 @@ export const io = {
             }
             return '请输入正确的序号'
           }
-          // 显示文件列表
           const fileList = files.map((file, index) => {
             const info = fileInfo[file] || {}
             let prefix = '📄'
-            if (file.includes('(N=')) {
-              prefix = '📦'
-            } else if (info.isBatch) {
-              prefix = '📎'
-            }
+            if (file.includes('(N=')) prefix = '📦'
+            else if (info.isBatch) prefix = '📎'
             return `${index + 1}.${prefix}${file}`
           }).join('\n')
           return `使用 import [序号]导入对应文件：\n${fileList}`
-        } catch (e) {
-          return `导入失败：${e.message}`
-        }
+        } catch (e) { return `导入失败：${e.message}` }
       })
   }
 }

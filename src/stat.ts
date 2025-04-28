@@ -28,21 +28,11 @@ interface QueryOptions {
  * @property {boolean} [skipPaging] - 是否跳过分页
  */
 export interface StatProcessOptions {
-  sortBy?: 'key' | 'count' | 'time'
-  limit?: number
-  disableCommandMerge?: boolean
-  truncateId?: boolean
-  displayBlacklist?: string[]
-  displayWhitelist?: string[]
-  page?: number
-  pageSize?: number
-  title?: string
-  skipPaging?: boolean
+  sortBy?: 'key' | 'count' | 'time', limit?: number, disableCommandMerge?: boolean,
+  truncateId?: boolean, displayBlacklist?: string[], displayWhitelist?: string[],
+  page?: number, pageSize?: number, title?: string, skipPaging?: boolean
 }
 
-/**
- * 统计数据处理函数集合
- */
 export const statProcessor = {
   /**
    * 处理统计记录并格式化显示
@@ -53,27 +43,16 @@ export const statProcessor = {
    * 处理后的结果，包含格式化项目、分页信息和标题
    */
   async processStatRecords(records: StatRecord[], aggregateKey: keyof StatRecord, options: StatProcessOptions = {}) {
-    const {
-      sortBy = 'count',
-      limit,
-      disableCommandMerge = false,
-      truncateId = false,
-      displayBlacklist = [],
-      displayWhitelist = [],
-      page = 1,
-      pageSize = 15,
-      title = '',
-      skipPaging = false
-    } = options;
+    const { sortBy = 'count', limit, disableCommandMerge = false, truncateId = false,
+            displayBlacklist = [], displayWhitelist = [], page = 1, pageSize = 15,
+            title = '', skipPaging = false } = options;
     const filteredRecords = Utils.filterStatRecords(records, {
-      keyField: aggregateKey as string,
-      displayWhitelist,
-      displayBlacklist,
-      disableCommandMerge
+      keyField: aggregateKey as string, displayWhitelist,
+      displayBlacklist, disableCommandMerge
     });
     // 创建聚合器
     const keyFormatter = (aggregateKey === 'command' && !disableCommandMerge)
-      ? (k: string) => k?.split('.')[0] || '' : undefined;
+      ? (k: string) => k?.split('.')[0] : undefined;
     const statsMap = Utils.generateStatsMap(filteredRecords, aggregateKey as string, keyFormatter);
     // 排序和处理数据
     let entries = Array.from(statsMap.entries()).sort((a, b) => {
@@ -82,16 +61,13 @@ export const statProcessor = {
       return a[0].localeCompare(b[0]);
     });
     const totalItems = entries.length;
-    let pagedEntries = entries;
-    let currentPage = 1, totalPages = 1;
+    let pagedEntries = entries, currentPage = 1, totalPages = 1;
     if (!skipPaging) {
       const effectiveLimit = limit ? Math.min(totalItems, limit) : totalItems;
       totalPages = Math.ceil(effectiveLimit / pageSize) || 1;
       currentPage = Math.min(Math.max(1, page), totalPages);
       const startIdx = (currentPage - 1) * pageSize;
-      const endIdx = limit
-        ? Math.min(startIdx + pageSize, limit, totalItems)
-        : Math.min(startIdx + pageSize, totalItems);
+      const endIdx = limit ? Math.min(startIdx + pageSize, limit, totalItems) : Math.min(startIdx + pageSize, totalItems);
       pagedEntries = entries.slice(startIdx, endIdx);
     }
     // 格式化标题和项目
@@ -100,18 +76,14 @@ export const statProcessor = {
       : title;
     const countWidth = 6, timeWidth = 10, nameWidth = 18;
     const items = pagedEntries.map(([key, {count, lastTime}]) => {
-      const displayName = Utils.formatDisplayName(
-        statsMap.get(key)?.displayName || key,
-        key,
-        truncateId
-      );
+      const displayName = Utils.formatDisplayName(statsMap.get(key)?.displayName || key, key, truncateId);
       const truncatedName = Utils.truncateByDisplayWidth(displayName, nameWidth);
       const countStr = count.toString() + (aggregateKey === 'command' ? '次' : '条');
       const truncatedCount = Utils.truncateByDisplayWidth(countStr, countWidth);
       const timeAgo = Utils.formatTimeAgo(lastTime);
       const truncatedTime = Utils.truncateByDisplayWidth(timeAgo, timeWidth);
-      const namePadding = ' '.repeat(Math.max(0, nameWidth - Utils.getStringDisplayWidth(truncatedName)));
-      const countPadding = ' '.repeat(Math.max(0, countWidth - Utils.getStringDisplayWidth(truncatedCount)));
+      const namePadding = ' '.repeat(Math.max(0, nameWidth - (truncatedName ? Array.from(truncatedName).reduce((w, c) => w + (/[\u3000-\u9fff\uff01-\uff60\u2E80-\u2FDF\u3040-\u30FF\u2600-\u26FF\u2700-\u27BF]/.test(c) ? 2 : 1), 0) : 0)));
+      const countPadding = ' '.repeat(Math.max(0, countWidth - (truncatedCount ? Array.from(truncatedCount).reduce((w, c) => w + (/[\u3000-\u9fff\uff01-\uff60\u2E80-\u2FDF\u3040-\u30FF\u2600-\u26FF\u2700-\u27BF]/.test(c) ? 2 : 1), 0) : 0)));
       return `${truncatedName}${namePadding} ${countPadding}${truncatedCount} ${truncatedTime}`;
     });
     return { items, page: currentPage, totalPages, totalItems, title: formattedTitle };
@@ -130,43 +102,23 @@ export const statProcessor = {
     if (options.user) query.userId = options.user
     if (options.guild) query.guildId = options.guild
     if (options.platform) query.platform = options.platform
-    if (type === 'user') {
-      query.command = '_message'
-    } else if (type === 'command') {
-      query.command = options.command ?? { $neq: '_message' }
-    } else if (options.command) {
-      query.command = options.command
-    }
+    if (type === 'user') query.command = '_message'
+    else if (type === 'command') query.command = options.command ?? { $neq: '_message' }
+    else if (options.command) query.command = options.command
     const records = await ctx.database.get('analytics.stat', query)
     if (!records?.length) return '暂无数据'
     // 查找并获取用户和群组的昵称
-    let userName = '', guildName = ''
-    if (options.user) {
-      const userRecord = records.find(r => r.userId === options.user && r.userName)
-      userName = userRecord?.userName
-    }
-    if (options.guild) {
-      const guildRecord = records.find(r => r.guildId === options.guild && r.guildName)
-      guildName = guildRecord?.guildName
-    }
+    const userName = options.user && records.find(r => r.userId === options.user && r.userName)?.userName
+    const guildName = options.guild && records.find(r => r.guildId === options.guild && r.guildName)?.guildName
     const conditions = Utils.buildConditions({
       user: options.user ? (userName || options.user) : null,
       guild: options.guild ? (guildName || options.guild) : null,
-      platform: options.platform,
-      command: options.command
+      platform: options.platform, command: options.command
     })
     let title = '';
-    if (conditions.length) {
-      // 存在筛选条件，显示详细条件
-      title = `${conditions.join('、')}的${typeMap[type]}统计 ——`;
-    } else if (options.guild && type !== 'guild') {
-      // 对于命令和用户统计，当只有群组筛选时特殊处理标题
-      const guildDisplay = guildName || options.guild;
-      title = `${guildDisplay}的${typeMap[type]}统计 ——`;
-    } else {
-      // 全局统计
-      title = `全局${typeMap[type]}统计 ——`;
-    }
+    if (conditions.length) title = `${conditions.join('、')}的${typeMap[type]}统计 ——`;
+    else if (options.guild && type !== 'guild') title = `${guildName || options.guild}的${typeMap[type]}统计 ——`;
+    else title = `全局${typeMap[type]}统计 ——`;
     return { records, title }
   },
 
@@ -179,18 +131,19 @@ export const statProcessor = {
    */
   formatList: (records: StatRecord[], key: keyof StatRecord, title: string): string | null => {
     const uniqueKeys = [...new Set(records.map(r => r[key] as string).filter(Boolean))];
+    if (!uniqueKeys.length) return null;
     if (key === 'command') {
-      const commands = uniqueKeys.filter(cmd => cmd !== '_message')
-      return commands.length ? `${title} ——\n${commands.join(',')}` : null
+      const commands = uniqueKeys.filter(cmd => cmd !== '_message');
+      return commands.length ? `${title} ——\n${commands.join(',')}` : null;
     } else if (key === 'userId' || key === 'guildId') {
       const items = uniqueKeys.map(id => {
-        const record = records.find(r => r[key] === id)
-        const name = key === 'userId' ? record?.userName : record?.guildName
-        return name ? `${name} (${id})` : id
-      })
-      return items.length ? `${title} ——\n${items.join(',')}` : null
+        const record = records.find(r => r[key] === id);
+        const name = key === 'userId' ? record?.userName : record?.guildName;
+        return name ? `${name} (${id})` : id;
+      });
+      return items.length ? `${title} ——\n${items.join(',')}` : null;
     }
-    return uniqueKeys.length ? `${title} ——\n${uniqueKeys.join(',')}` : null
+    return `${title} ——\n${uniqueKeys.join(',')}`;
   },
 
   /**

@@ -280,7 +280,7 @@ export class Rank {
         item.rankChange < 0 ? `↓${Math.abs(item.rankChange)}` : '-'
       const nameWidth = 20
       const name = Utils.truncateByDisplayWidth(item.userName, nameWidth)
-      const padding = ' '.repeat(Math.max(0, nameWidth - Utils.getStringDisplayWidth(name)))
+      const padding = ' '.repeat(Math.max(0, nameWidth - (name ? Array.from(name).reduce((w, c) => w + (/[\u3000-\u9fff\uff01-\uff60\u2E80-\u2FDF\u3040-\u30FF\u2600-\u26FF\u2700-\u27BF]/.test(c) ? 2 : 1), 0) : 0)))
       return `${item.rank.toString().padStart(2)}. ${name}${padding} +${item.diff}条 ${rankChangeText}`
     }).join('\n')
     return `${title} ——\n${lines}`
