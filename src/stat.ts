@@ -133,7 +133,7 @@ export const statProcessor = {
     if (type === 'user') {
       query.command = '_message'
     } else if (type === 'command') {
-      query.command = options.command || { $neq: '_message' }
+      query.command = options.command ?? { $neq: '_message' }
     } else if (options.command) {
       query.command = options.command
     }
@@ -143,11 +143,11 @@ export const statProcessor = {
     let userName = '', guildName = ''
     if (options.user) {
       const userRecord = records.find(r => r.userId === options.user && r.userName)
-      userName = userRecord?.userName || ''
+      userName = userRecord?.userName
     }
     if (options.guild) {
       const guildRecord = records.find(r => r.guildId === options.guild && r.guildName)
-      guildName = guildRecord?.guildName || ''
+      guildName = guildRecord?.guildName
     }
     const conditions = Utils.buildConditions({
       user: options.user ? (userName || options.user) : null,

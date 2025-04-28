@@ -89,14 +89,12 @@ declare module 'koishi' {
  * @property {number} stat - 统计记录ID，关联到统计数据
  * @property {Date} timestamp - 记录时间戳
  * @property {number} count - 统计项的计数值
- * @property {number} rank - 当前排名位置
  */
 export interface RankRecord {
   id: number
   stat: number
   timestamp: Date
   count: number
-  rank: number
 }
 
 /**

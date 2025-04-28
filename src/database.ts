@@ -43,8 +43,7 @@ export const database = {
       id: 'unsigned',
       stat: 'unsigned',
       timestamp: 'timestamp',
-      count: 'unsigned',
-      rank: 'unsigned'
+      count: 'unsigned'
     }, {
       primary: 'id',
       autoInc: true,
@@ -59,7 +58,7 @@ export const database = {
    * @description 更新或插入统计记录
    */
   async saveRecord(ctx: Context, data: Partial<StatRecord>) {
-    data.command ||= '_message'
+    data.command ??= '_message'
     if (data.guildId?.includes('private')) return;
     try {
       const query = {

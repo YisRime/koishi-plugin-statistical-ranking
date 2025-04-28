@@ -1,25 +1,30 @@
 import { Context, h } from 'koishi'
 import {} from 'koishi-plugin-cron'
 import { Utils } from './utils'
-import { StatRecord } from './index'
 import { Renderer } from './render'
 
 /**
- * 用户排名变化信息
+ * 表示排名差异数据的接口
+ * @interface RankDiff
+ * @property {string} userId - 用户ID
+ * @property {string} userName - 用户名称
+ * @property {number} currentCount - 当前计数
+ * @property {number} previousCount - 之前计数
+ * @property {number} diff - 差值
+ * @property {number} rank - 当前排名
+ * @property {number} [prevRank] - 之前排名（可选）
+ * @property {number} [rankChange] - 排名变化（可选）
  */
 interface RankDiff {
-  userId: string
-  userName: string
-  currentCount: number
-  previousCount: number
-  diff: number
-  rank: number
-  prevRank?: number
-  rankChange?: number
+  userId: string, userName: string, currentCount: number, previousCount: number,
+  diff: number, rank: number, prevRank?: number, rankChange?: number
 }
 
 /**
- * 排行榜配置项
+ * 排名功能配置接口
+ * @interface RankConfig
+ * @property {string} [updateInterval] - 更新间隔
+ * @property {boolean} [defaultImageMode] - 默认是否使用图像模式
  */
 interface RankConfig {
   updateInterval?: string
@@ -27,196 +32,155 @@ interface RankConfig {
 }
 
 /**
- * 排行榜主类，负责排行快照生成、查询与展示
+ * 排名功能实现类
+ * @class Rank
  */
 export class Rank {
+  /** Koishi 上下文 */
   private ctx: Context
+  /** 默认是否使用图像模式 */
   private defaultImageMode: boolean
-  private updateFrequencyHours: number
-  private updateInterval: string
 
-  private static readonly hourMap = {
-    'hourly': 1,
-    '6h': 6,
-    '12h': 12,
-    'daily': 24
-  }
-
+  /**
+   * 创建排名类实例
+   * @param {Context} ctx - Koishi 上下文
+   * @param {RankConfig} config - 排名配置
+   */
   constructor(ctx: Context, config: RankConfig = {}) {
     this.ctx = ctx
-    this.updateInterval = config.updateInterval || 'daily'
-    this.updateFrequencyHours = Rank.hourMap[this.updateInterval] || Rank.hourMap.daily
     this.defaultImageMode = !!config.defaultImageMode
   }
 
   /**
-   * 将日期格式化为小时精度
-   */
-  private formatToHourPrecision(date: Date): Date {
-    const d = new Date(date)
-    d.setMinutes(0, 0, 0)
-    return d
-  }
-
-  /**
-   * 生成当前的排行榜快照
+   * 生成排名快照，记录当前数据状态
+   * @returns {Promise<void>}
    */
   async generateRankSnapshot() {
-    const now = new Date()
-    const currentTimestamp = this.formatToHourPrecision(now)
+    const currentTimestamp = new Date(new Date()); currentTimestamp.setMinutes(0, 0, 0);
     try {
+      // 获取记录和之前的快照
       const records = await this.ctx.database.get('analytics.stat', { command: '_message' })
       if (!records.length) return
-      const guildGroups = new Map<string, StatRecord[]>()
-      records.forEach(record => {
-        if (!record.id) return
-        const key = `${record.platform}:${record.guildId}`
-        if (!guildGroups.has(key)) guildGroups.set(key, [])
-        guildGroups.get(key).push(record)
-      })
-      const batchUpsert = []
-      for (const groupRecords of guildGroups.values()) {
-        groupRecords.sort((a, b) => b.count - a.count)
-          .forEach((record, i) => {
-            if (!record.id) return
-            batchUpsert.push({ record, rank: i + 1 })
-          })
-      }
-      if (!batchUpsert.length) return
-      const statIds = batchUpsert.map(item => item.record.id)
-      // 只取每个statId最新的快照
+      const statIds = records.filter(r => r.id).map(r => r.id)
       const prevSnapshots = await this.ctx.database.get('analytics.rank', {
-        stat: { $in: statIds },
-        timestamp: { $lt: currentTimestamp }
+        stat: { $in: statIds }, timestamp: { $lt: currentTimestamp }
       }, { sort: { timestamp: 'desc' } })
-      const prevMap = new Map<number, any>()
+      // 找出需要更新的记录
+      const prevMap = new Map()
       prevSnapshots.forEach(snap => {
-        if (!prevMap.has(snap.stat) || prevMap.get(snap.stat).timestamp < snap.timestamp) {
+        if (!prevMap.has(snap.stat) || prevMap.get(snap.stat).timestamp < snap.timestamp)
           prevMap.set(snap.stat, snap)
-        }
       })
-      // 只保存有增量的记录
-      const filteredBatch = batchUpsert.filter(item => {
-        const prev = prevMap.get(item.record.id)
-        return !prev || prev.count !== item.record.count
-      }).map(item => ({
-        stat: item.record.id,
-        timestamp: currentTimestamp,
-        count: item.record.count,
-        rank: item.rank
-      }))
-      if (!filteredBatch.length) {
-        this.ctx.logger.info(`无需更新排行记录`)
-        return
-      }
-      const existing = await this.ctx.database.get('analytics.rank', { timestamp: currentTimestamp }, ['stat'])
+      // 筛选并准备更新
+      const existing = await this.ctx.database.get('analytics.rank',
+        { timestamp: currentTimestamp }, ['stat'])
       const existSet = new Set(existing.map(r => r.stat))
-      const finalBatch = filteredBatch.filter(r => !existSet.has(r.stat))
-      if (finalBatch.length) {
-        await this.ctx.database.upsert('analytics.rank', finalBatch)
-        this.ctx.logger.info(`已更新 ${finalBatch.length} 条排行记录`)
+      const snapshots = records
+        .filter(r => r.id && (!prevMap.has(r.id) || prevMap.get(r.id).count !== r.count))
+        .filter(r => r.id && !existSet.has(r.id))
+        .map(r => ({ stat: r.id, timestamp: currentTimestamp, count: r.count }))
+      if (snapshots.length) {
+        await this.ctx.database.upsert('analytics.rank', snapshots)
+        this.ctx.logger.info(`已更新 ${snapshots.length} 条排行记录`)
       } else {
-        this.ctx.logger.info(`无需更新排行记录`)
+        this.ctx.logger.info('无需更新排行记录')
       }
-    } catch (error) {
-      this.ctx.logger.error(`排行更新失败:`, error)
-    }
+    } catch (error) { this.ctx.logger.error('排行更新失败:', error) }
   }
 
   /**
-   * 获取指定群组在指定时间范围内的排行榜数据
-   * @param platform 平台
-   * @param guildId 群号（全局排行时为null）
-   * @param hours 时间范围
-   * @param limit 返回条数
-   * @param global 是否全局排行
+   * 获取排名数据
+   * @param {string} platform - 平台标识
+   * @param {string | null} guildId - 群组ID，为 null 时表示全局
+   * @param {number} hours - 时间范围（小时）
+   * @param {number} limit - 限制返回数量，-1 表示不限制
+   * @param {boolean} global - 是否获取全局数据
+   * @returns {Promise<RankDiff[]>} 排名差异数据数组
    */
   async getRankingData(platform: string, guildId: string | null, hours = 24, limit = 10, global = false): Promise<RankDiff[]> {
     try {
-      const statQuery: any = { platform, command: '_message' }
-      if (!global && guildId) statQuery.guildId = guildId
-      const statRecords = await this.ctx.database.get('analytics.stat', statQuery, ['id', 'userId', 'userName'])
+      // 获取数据
+      const statQuery = { platform, command: '_message' }
+      if (!global && guildId) statQuery['guildId'] = guildId
+      const statRecords = await this.ctx.database.get('analytics.stat', statQuery)
       if (!statRecords.length) return []
       const statIds = statRecords.filter(r => r.id).map(r => r.id)
       if (!statIds.length) return []
-      const currentTimestamp = this.formatToHourPrecision(new Date())
+      // 计算时间点
+      const currentTimestamp = new Date(new Date()); currentTimestamp.setMinutes(0, 0, 0);
       const previousTimestamp = new Date(currentTimestamp)
       previousTimestamp.setHours(previousTimestamp.getHours() - hours)
-      // 获取当前和前一时间点的rank快照
-      const [currentRankData, previousRankData] = await Promise.all([
+      const olderTimestamp = new Date(previousTimestamp)
+      olderTimestamp.setHours(previousTimestamp.getHours() - hours)
+      // 获取历史数据
+      const [previousRankData, olderRankData] = await Promise.all([
         this.ctx.database.get('analytics.rank', {
-          stat: { $in: statIds },
-          timestamp: { $lte: currentTimestamp }
+          stat: { $in: statIds }, timestamp: { $lte: previousTimestamp }
         }, { sort: { timestamp: 'desc' } }),
         this.ctx.database.get('analytics.rank', {
-          stat: { $in: statIds },
-          timestamp: { $lte: previousTimestamp }
+          stat: { $in: statIds }, timestamp: { $lte: olderTimestamp }
         }, { sort: { timestamp: 'desc' } })
       ])
-      // 只保留每个statId最新的快照
-      const latestRankMap = new Map<number, any>()
-      currentRankData.forEach(r => {
-        if (!latestRankMap.has(r.stat) || latestRankMap.get(r.stat).timestamp < r.timestamp)
-          latestRankMap.set(r.stat, r)
-      })
-      const prevRankMap = new Map<number, any>()
-      previousRankData.forEach(r => {
-        if (!prevRankMap.has(r.stat) || prevRankMap.get(r.stat).timestamp < r.timestamp)
-          prevRankMap.set(r.stat, r)
-      })
-      const userMap = new Map(
-        statRecords.filter(r => r.id).map(r => [r.id, {
-          userId: r.userId,
-          userName: Utils.sanitizeString(r.userName || r.userId || '')
-        }])
-      )
-      // 统计时间段内的发言增量，只显示有增量的记录
-      const intervalRankArr = []
-      for (const [statId, curr] of latestRankMap.entries()) {
-        const prev = prevRankMap.get(statId)
-        const user = userMap.get(statId) || { userId: '', userName: '' }
-        const prevCount = prev?.count ?? 0
-        const intervalCount = curr.count - prevCount
-        if (intervalCount > 0) {
-          intervalRankArr.push({
-            stat: statId,
-            userId: user.userId,
-            userName: user.userName,
-            intervalCount,
-            currentCount: curr.count,
-            previousCount: prevCount,
-            rank: 0,
-            prevRank: prev?.rank,
-            rankChange: prev?.rank ? prev.rank - 0 : null
-          })
-        }
+      // 准备映射
+      const userMap = new Map(statRecords
+        .filter(r => r.id)
+        .map(r => [r.id, { userId: r.userId, userName: Utils.sanitizeString(r.userName || r.userId) }]))
+      const getSnapMap = data => {
+        const map = new Map();
+        data.forEach(r => {
+          if (!map.has(r.stat) || map.get(r.stat).timestamp < r.timestamp)
+            map.set(r.stat, r)
+        });
+        return map
       }
-      intervalRankArr.sort((a, b) => b.intervalCount - a.intervalCount)
-      intervalRankArr.forEach((item, idx) => { item.rank = idx + 1 })
-      // 只有当用户之前有发言记录时才计算排名变化，否则标记为"新"
-      intervalRankArr.forEach(item => {
-        item.rankChange = (item.prevRank !== undefined && item.prevRank !== null && item.previousCount > 0)
-          ? item.prevRank - item.rank : null
-      })
-      // 只返回有增量的记录
-      return intervalRankArr
-        .slice(0, limit)
-        .map(item => ({
-          userId: item.userId,
-          userName: item.userName,
-          currentCount: item.currentCount,
-          previousCount: item.previousCount,
-          diff: item.intervalCount,
-          rank: item.rank,
-          prevRank: item.prevRank,
-          rankChange: item.rankChange
+      const prevRankMap = getSnapMap(previousRankData)
+      const olderRankMap = getSnapMap(olderRankData)
+      // 计算当前时间段增量
+      const currentIntervals = statRecords
+        .filter(r => r.id)
+        .map(record => {
+          const prev = prevRankMap.get(record.id)
+          const prevCount = prev?.count ?? 0
+          const diff = record.count - prevCount
+          return {
+            stat: record.id, userId: record.userId,
+            userName: userMap.get(record.id)?.userName || record.userId,
+            intervalCount: diff, currentCount: record.count, previousCount: prevCount,
+            rank: 0, prevRank: undefined, rankChange: null
+          }
+        })
+        .filter(item => item.intervalCount > 0)
+      // 计算上一时间段增量
+      const prevIntervals = [...prevRankMap.entries()]
+        .map(([statId, prev]) => ({
+          stat: statId,
+          intervalCount: prev.count - (olderRankMap.get(statId)?.count ?? 0)
         }))
+        .filter(item => item.intervalCount > 0)
+      // 计算排名和变化
+      currentIntervals.sort((a, b) => b.intervalCount - a.intervalCount)
+      currentIntervals.forEach((item, idx) => { item.rank = idx + 1 })
+      prevIntervals.sort((a, b) => b.intervalCount - a.intervalCount)
+      const prevRanks = new Map(prevIntervals.map((item, idx) => [item.stat, idx + 1]))
+      currentIntervals.forEach(item => {
+        item.prevRank = prevRanks.get(item.stat)
+        item.rankChange = item.prevRank ? item.prevRank - item.rank : null
+      })
+      // 返回结果
+      return currentIntervals
+        .slice(0, limit >= 0 ? limit : currentIntervals.length)
+        .map(({ userId, userName, currentCount, previousCount, intervalCount, rank, prevRank, rankChange }) =>
+          ({ userId, userName, currentCount, previousCount, diff: intervalCount, rank, prevRank, rankChange }))
     } catch (error) {
-      this.ctx.logger.error(`排行获取出错:`, error)
+      this.ctx.logger.error('排行获取出错:', error)
       return []
     }
   }
 
+  /**
+   * 注册排名相关指令
+   * @param {any} stat - 统计命令实例
+   */
   registerRankCommands(stat) {
     stat.subcommand('.rank [arg:string]', '查看发言排行')
       .option('guild', '-g [guild:string] 指定群组排行', { authority: 2 })
@@ -226,61 +190,48 @@ export class Rank {
       .option('all', '-a 显示全局排行')
       .action(async ({ session, options, args }) => {
         const arg = args[0]?.toLowerCase()
-        const showAll = arg === 'all' || options.all
-        let page = arg && /^\d+$/.test(arg) ? parseInt(arg) : 1
-        const pageSize = 15
-        const minRowsForNewPage = 5
+        const showAll = arg === 'all'
+        let page = arg && /^\d+$/.test(arg) ? parseInt(arg) : 1, pageSize = 15
         const { hours, description } = this.parseTimeRange(options.time || 'd')
         const platform = options.platform || session.platform
         const guildId = options.all ? null : (options.guild || session.guildId)
         if (!options.all && !guildId) return '暂无数据'
         try {
-          // 获取群名
-          let guildName = ''
-          if (guildId) {
-            guildName = await session.bot.getGuild?.(guildId)
-              .then(guild => guild?.name || guildId)
-              .catch(() => guildId)
-          }
-          // 构造条件
-          let title = ''
+          // 获取群组名称和构建标题
+          const guildName = guildId ? await session.bot.getGuild?.(guildId)
+            .then(guild => guild?.name || guildId).catch(() => guildId) : ''
           const showPlatform = !!options.platform
           const conditions = Utils.buildConditions({
             guild: guildId ? guildName || guildId : null,
             platform: showPlatform ? platform : null,
           })
-          if (conditions.length) {
-            title = `${conditions.join('、')}${description}的发言排行`
-          } else {
-            title = `全局${description}的发言排行`
-          }
-          const allRankData = await this.getRankingData(platform, guildId, hours, showAll ? 1000 : 1000, !!options.all)
+          const title = conditions.length
+            ? `${conditions.join('、')}${description}的发言排行`
+            : `全局${description}的发言排行`
+          // 获取排行数据
+          const allRankData = await this.getRankingData(platform, guildId, hours, -1, !!options.all)
           if (!allRankData.length) return `${guildName || platform} 暂无数据`
-          // 分页
-          let pagedRankData: RankDiff[]
-          let totalPages = 1
+          // 分页处理
+          let pagedRankData, totalPages = 1
           if (showAll) {
             pagedRankData = allRankData
           } else {
             totalPages = Math.ceil(allRankData.length / pageSize) || 1
             page = Math.min(Math.max(1, page), totalPages)
-            const startIdx = (page - 1) * pageSize
-            pagedRankData = allRankData.slice(startIdx, startIdx + pageSize)
+            pagedRankData = allRankData.slice((page - 1) * pageSize, page * pageSize)
           }
-          const pageInfo = (showAll || totalPages <= 1) ? '' : `（第${page}/${totalPages}页）`
-          const finalTitle = `${title}${pageInfo}`
-          const useImageMode = options.visual !== undefined ?
-            !this.defaultImageMode : this.defaultImageMode
+          const finalTitle = `${title}${(showAll || totalPages <= 1) ? '' : `（第${page}/${totalPages}页）`}`
+          // 渲染模式
+          const useImageMode = options.visual !== undefined ? !this.defaultImageMode : this.defaultImageMode
           if (useImageMode && this.ctx.puppeteer) {
             const renderer = new Renderer(this.ctx)
             const imagePages = Utils.paginateArray(allRankData)
-            const buffers: Buffer[] = []
+            const buffers = []
             for (let i = 0; i < imagePages.length; i++) {
-              const pageTitle = imagePages.length > 1
-                ? `${title}（第${i + 1}/${imagePages.length}页）`
-                : title
-              const buffer = await renderer.renderRankingImage(imagePages[i], pageTitle)
-              buffers.push(buffer)
+              buffers.push(await renderer.renderRankingImage(
+                imagePages[i],
+                imagePages.length > 1 ? `${title}（第${i+1}/${imagePages.length}页）` : title
+              ))
             }
             return buffers.length === 1
               ? h.image(buffers[0], 'image/png')
@@ -296,17 +247,17 @@ export class Rank {
 
   /**
    * 解析时间范围字符串
+   * @param {string} timerange - 时间范围字符串，如 'd'（天）、'w'（周）
+   * @returns {{ hours: number, description: string }} 包含小时数和描述的对象
+   * @private
    */
   private parseTimeRange(timerange: string): { hours: number, description: string } {
     const hourMap = { h: 1, d: 24, w: 168, m: 720, y: 8760 }
     const descMap = { h: '近1时', d: '昨日', w: '近7天', m: '近30天', y: '近1年' }
-    if (hourMap[timerange]) {
-      return { hours: hourMap[timerange], description: descMap[timerange] }
-    }
+    if (hourMap[timerange]) return { hours: hourMap[timerange], description: descMap[timerange] }
     const match = /^(\d+)([hdwmy])$/.exec(timerange)
     if (match) {
-      const value = parseInt(match[1], 10)
-      const unit = match[2]
+      const value = parseInt(match[1], 10), unit = match[2]
       const hours = Math.max(1, Math.ceil(value * (hourMap[unit] || 24)))
       const unitNames = { h: '时', d: '天', w: '周', m: '月', y: '年' }
       return { hours, description: `近${value}${unitNames[unit] || '天'}` }
@@ -315,7 +266,10 @@ export class Rank {
   }
 
   /**
-   * 文本格式化排行榜
+   * 格式化排名数据为文本输出
+   * @param {RankDiff[]} data - 排名数据
+   * @param {string} title - 标题
+   * @returns {string} 格式化的排名文本
    */
   formatRankingText(data: RankDiff[], title: string): string {
     if (!data.length) return `${title}\n暂无数据`
@@ -324,7 +278,7 @@ export class Rank {
         item.rankChange === null ? '新' :
         item.rankChange > 0 ? `↑${item.rankChange}` :
         item.rankChange < 0 ? `↓${Math.abs(item.rankChange)}` : '-'
-      const nameWidth = 15
+      const nameWidth = 20
       const name = Utils.truncateByDisplayWidth(item.userName, nameWidth)
       const padding = ' '.repeat(Math.max(0, nameWidth - Utils.getStringDisplayWidth(name)))
       return `${item.rank.toString().padStart(2)}. ${name}${padding} +${item.diff}条 ${rankChangeText}`

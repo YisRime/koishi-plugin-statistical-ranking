@@ -123,15 +123,15 @@ export const Utils = {
    * @returns {Promise<string>} 平台用户ID
    */
   async getPlatformId(session: any): Promise<string> {
-    if (!session?.userId || !session?.platform || !session?.app?.database) return session?.userId || ''
+    if (!session?.userId || !session?.platform || !session?.app?.database) return session?.userId
     try {
       const [binding] = await session.app.database.get('binding', {
         aid: session.userId,
         platform: session.platform
       })
-      return binding?.pid || session.userId
+      return binding?.pid ?? session.userId
     } catch {
-      return session.userId || ''
+      return session.userId
     }
   },
 
@@ -148,14 +148,14 @@ export const Utils = {
     const userId = await this.getPlatformId(session)
     const bot = session.bot
     let userName = '', guildName = ''
-    userName = session.username ?? ''
+    userName = session.username
     if (!userName && bot?.getGuildMember) {
       const member = await bot.getGuildMember(guildId, userId).catch(() => null)
-      userName = member?.username ?? ''
+      userName = member?.username
     }
     if (guildId !== 'private' && bot?.getGuild) {
       const guild = await bot.getGuild(guildId).catch(() => null)
-      guildName = guild?.name ?? ''
+      guildName = guild?.name
     }
     return {
       platform,
@@ -179,7 +179,7 @@ export const Utils = {
       return (rulePlatform && target.platform === rulePlatform) ||
              (ruleGuild && target.guildId === ruleGuild) ||
              (ruleUser && target.userId === ruleUser) ||
-             (rule.endsWith(':') && target.platform && rule.startsWith(target.platform + ':'))
+             (rule.endsWith(':') && rule.startsWith(target.platform + ':'))
     })
   },
 

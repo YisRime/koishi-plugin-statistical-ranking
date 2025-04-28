@@ -22,13 +22,12 @@ export class Renderer {
    * @param {number} [options.width] - 图片宽度
    * @returns {Promise<Buffer>} 图片Buffer数据
    */
-  async htmlToImage(html: string, options: { width?: number } = {}): Promise<Buffer> {
+  async htmlToImage(html: string): Promise<Buffer> {
     let page = null
     try {
       page = await this.ctx.puppeteer.page()
-      const initialViewportWidth = options.width || 720
       await page.setViewport({
-        width: initialViewportWidth,
+        width: 720,
         height: 1080,
         deviceScaleFactor: 2.0
       })
@@ -394,7 +393,7 @@ export class Renderer {
       return `
         <tr style="background-color:${bgColor};">
           <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:center;">${item.rank}</td>
-          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04);">${Utils.truncateByDisplayWidth(item.userName, 18)}</td>
+          <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04);">${item.userName}</td>
           <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:right; white-space:nowrap;">${item.diff > 0 ? '+' : ''}${item.diff}</td>
           <td style="padding:6px 12px; border-bottom:1px solid rgba(0,0,0,0.04); text-align:center; white-space:nowrap;">${rankChangeHtml}</td>
         </tr>
@@ -423,7 +422,7 @@ export class Renderer {
                 <th style="text-align:center; border-radius:6px 0 0 0; padding:8px 12px; width:60px;">排名</th>
                 <th style="text-align:left; padding:8px 12px;">名称</th>
                 <th style="text-align:right; white-space:nowrap; padding:8px 12px;">数量</th>
-                <th style="text-align:center; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px; width:80px;">变化</th>
+                <th style="text-align:center; white-space:nowrap; border-radius:0 6px 0 0; padding:8px 12px; width:80px;">排名变化</th>
               </tr>
             </thead>
             <tbody>${tableRows}</tbody>

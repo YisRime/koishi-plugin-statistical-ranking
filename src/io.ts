@@ -65,10 +65,9 @@ export const io = {
 
   /**
    * 列出可导入的统计数据文件
-   * @param {Context} ctx Koishi 上下文
    * @returns {Promise<{files: string[], fileInfo: Record<string, any>}>} 文件列表和详细信息
    */
-  async listImportFiles(ctx: Context) {
+  async listImportFiles() {
     const statDir = Utils.getDataDirectory()
     const files = await fs.promises.readdir(statDir)
     const statFiles = files.filter(file =>
@@ -420,7 +419,7 @@ export const io = {
             }
           }
           // 获取可导入文件列表
-          const { files, fileInfo } = await this.listImportFiles(ctx)
+          const { files, fileInfo } = await this.listImportFiles()
           if (!files.length) {
             return '未找到历史记录文件'
           }
