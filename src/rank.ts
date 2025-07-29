@@ -57,30 +57,52 @@ export class Rank {
    * @returns {Promise<void>}
    */
   async generateRankSnapshot() {
-    const currentTimestamp = new Date();
-    currentTimestamp.setMinutes(0, 0, 0);
+    const currentTimestamp = new Date()
+    currentTimestamp.setMinutes(0, 0, 0)
+    const batchSize = 1000 // 定义每批处理的记录数
+    let offset = 0
+    let totalUpdated = 0
     try {
-      const records = await this.ctx.database.get('analytics.stat', { command: '_message' })
-      if (!records.length) return
-      const statIds = records.filter(r => r.id).map(r => r.id)
-      const prevSnapshots = await this.ctx.database.get('analytics.rank', {
-        stat: { $in: statIds }, timestamp: { $lt: currentTimestamp }
-      }, { sort: { timestamp: 'desc' } })
-      const prevMap = new Map()
-      prevSnapshots.forEach(snap => {
-        if (!prevMap.has(snap.stat) || prevMap.get(snap.stat).timestamp < snap.timestamp)
-          prevMap.set(snap.stat, snap)
-      })
-      const existSet = new Set((await this.ctx.database.get('analytics.rank',
-        { timestamp: currentTimestamp }, ['stat'])).map(r => r.stat))
-      const snapshots = records
-        .filter(r => r.id &&
-          (!prevMap.has(r.id) || prevMap.get(r.id).count !== r.count) &&
-          !existSet.has(r.id))
-        .map(r => ({ stat: r.id, timestamp: currentTimestamp, count: r.count }))
-      if (snapshots.length) {
-        await this.ctx.database.upsert('analytics.rank', snapshots)
-        this.ctx.logger.info(`已更新 ${snapshots.length} 条排行记录`)
+      while (true) {
+        const records = await this.ctx.database.get('analytics.stat',
+          { command: '_message' },
+          { limit: batchSize, offset }
+        )
+        if (!records.length) break // 没有更多记录时退出循环
+        const statIds = records.filter(r => r.id).map(r => r.id)
+        if (!statIds.length) {
+          offset += records.length
+          continue // 如果当前批次没有有效ID，则继续下一批
+        }
+        const [prevSnapshots, existingRanks] = await Promise.all([
+          this.ctx.database.get('analytics.rank', {
+            stat: { $in: statIds },
+            timestamp: { $lt: currentTimestamp },
+          }, { sort: { timestamp: 'desc' } }),
+          this.ctx.database.get('analytics.rank', {
+            timestamp: currentTimestamp,
+            stat: { $in: statIds },
+          }, ['stat'])
+        ])
+        const prevMap = new Map()
+        prevSnapshots.forEach(snap => {
+          if (!prevMap.has(snap.stat) || prevMap.get(snap.stat).timestamp < snap.timestamp) {
+            prevMap.set(snap.stat, snap)
+          }
+        })
+        const existSet = new Set(existingRanks.map(r => r.stat))
+        const snapshotsToCreate = records
+          .filter(r =>
+            r.id &&
+            !existSet.has(r.id) &&
+            (!prevMap.has(r.id) || prevMap.get(r.id).count !== r.count)
+          )
+          .map(r => ({ stat: r.id, timestamp: currentTimestamp, count: r.count }))
+        if (snapshotsToCreate.length) {
+          await this.ctx.database.upsert('analytics.rank', snapshotsToCreate)
+          totalUpdated += snapshotsToCreate.length
+        }
+        offset += records.length // 更新偏移量以处理下一批
       }
     } catch (error) {
       this.ctx.logger.error('排行更新失败:', error)
